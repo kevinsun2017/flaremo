@@ -1,0 +1,1 @@
+ALTER TABLE `memos_sse_events` ADD `team_id` text;

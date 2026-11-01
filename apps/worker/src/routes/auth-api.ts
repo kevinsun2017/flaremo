@@ -1,0 +1,589 @@
+import {
+  assertMemberQuota,
+  claimOwnerBootstrap,
+  completeOwnerBootstrap,
+  createFlaremoMemberWithLink,
+  deriveUniqueUsername,
+  getAuthBootstrapStatus,
+  getFlaremoUserByAuthUserId,
+  getOwnerAuthUserId,
+  getUserRegistrationAllowed,
+  listMemosPersonalAccessTokens,
+  markOwnerBootstrapRecoveryRequired,
+  NotFoundError,
+  QuotaExceededError,
+  reconcileOwnerBootstrap,
+  SELF_HOST_UNLIMITED,
+  updateFlaremoUserEmail,
+} from "@flaremo/domain";
+import { zValidator } from "@hono/zod-validator";
+import { Hono } from "hono";
+import { z } from "zod";
+import {
+  type FlareMoAuth,
+  getBootstrapSecret,
+  getPublicUrl,
+  getRecoverySecret,
+} from "../auth-env";
+import { resolveCaptchaConfig, verifyCaptchaRequest } from "../captcha";
+import { getFlareMoDb, type HonoBindings, loadAuthFactory } from "../context";
+import {
+  resolveEmailSendConfig,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "../email";
+import { jsonError } from "../http";
+import { rateLimitGuard } from "../rate-limit";
+
+export const authApi = new Hono<HonoBindings>();
+
+const bootstrapSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  email: z.string().trim().email().max(320),
+  password: z.string().min(8).max(128),
+});
+
+const operatorRecoverySchema = z.object({
+  new_password: z.string().min(8).max(128),
+});
+
+const registerSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  email: z.string().trim().email().max(320),
+  password: z.string().min(8).max(128),
+});
+
+authApi.get("/bootstrap/status", async (c) => {
+  const db = getFlareMoDb(c.env);
+  const status = await getAuthBootstrapStatus(db);
+  let authConfigured = false;
+  try {
+    const { createFlareMoAuth } = await loadAuthFactory();
+    createFlareMoAuth(c.env, db);
+    authConfigured = true;
+  } catch {
+    authConfigured = false;
+  }
+
+  return c.json({
+    initialized: status.initialized,
+    state: status.state,
+    setup_available:
+      status.state === "ready" &&
+      Boolean(getBootstrapSecret(c.env)) &&
+      authConfigured,
+  });
+});
+
+authApi.get("/register/status", async (c) => {
+  const db = getFlareMoDb(c.env);
+  const status = await getAuthBootstrapStatus(db);
+  const captcha = resolveCaptchaConfig(c.env);
+  return c.json({
+    registration_open: await getUserRegistrationAllowed(db),
+    initialized: status.initialized,
+    email_verification_required:
+      (await resolveEmailSendConfig(c.env, db)).provider !== "none",
+    captcha: {
+      provider: captcha.provider,
+      site_key: captcha.siteKey,
+    },
+  });
+});
+
+authApi.post("/register", zValidator("json", registerSchema), async (c) => {
+  const throttled = await rateLimitGuard(c, "register");
+  if (throttled) return throttled;
+  const db = getFlareMoDb(c.env);
+  const status = await getAuthBootstrapStatus(db);
+  if (status.state !== "complete") {
+    return c.json(
+      { error: { message: "Registration is not available yet." } },
+      409,
+    );
+  }
+  if (!(await getUserRegistrationAllowed(db))) {
+    return c.json(
+      { error: { message: "Registration is currently closed." } },
+      403,
+    );
+  }
+
+  try {
+    await verifyCaptchaRequest(c.env, c.req.raw);
+  } catch (error) {
+    return jsonError(c, error);
+  }
+  const input = c.req.valid("json");
+  const email = input.email.trim();
+  const username = await deriveUniqueUsername(db, email);
+  // Pre-check before the Better Auth identity exists: failing only at link
+  // time would orphan an auth user on a spent member quota.
+  try {
+    await assertMemberQuota(db, c.get("planLimits") ?? SELF_HOST_UNLIMITED);
+  } catch (error) {
+    if (error instanceof QuotaExceededError) {
+      return c.json({ error: { message: error.message } }, 429);
+    }
+    throw error;
+  }
+  const { createFlareMoAuth } = await loadAuthFactory();
+  let auth: FlareMoAuth;
+  try {
+    auth = createFlareMoAuth(c.env, db, { allowBootstrapSignUp: true });
+  } catch {
+    return c.json(
+      { error: { message: "Native authentication is not configured." } },
+      503,
+    );
+  }
+
+  try {
+    const result = await auth.api.signUpEmail({
+      body: {
+        email,
+        name: input.name,
+        password: input.password,
+        username,
+        displayUsername: input.name,
+      },
+    });
+    await createFlaremoMemberWithLink(
+      db,
+      {
+        authUserId: result.user.id,
+        email,
+        name: input.name,
+      },
+      c.get("planLimits") ?? SELF_HOST_UNLIMITED,
+    );
+    // When a transactional-email provider is configured, registration is not
+    // complete until the address is verified; the account can still sign in
+    // but the UI prompts for verification.
+    if ((await resolveEmailSendConfig(c.env, db)).provider !== "none") {
+      const token = await auth.createEmailVerificationToken(result.user.id);
+      const sent = await sendVerificationEmail(c.env, db, {
+        to: email,
+        token,
+        publicUrl: getPublicUrl(c.env),
+        acceptLanguage: c.req.header("accept-language"),
+      });
+      if (!sent) {
+        return c.json(
+          { error: { message: "Verification email could not be sent." } },
+          502,
+        );
+      }
+    }
+    return c.json({ ok: true }, 201);
+  } catch (error) {
+    // A spent member quota must surface as its own status, not drown in the
+    // generic "registration failed" path that hides Better Auth internals.
+    if (error instanceof QuotaExceededError) {
+      return c.json({ error: { message: error.message } }, 429);
+    }
+    return c.json(
+      { error: { message: "Registration could not be completed." } },
+      400,
+    );
+  }
+});
+
+authApi.get("/verify-email", async (c) => {
+  const token = c.req.query("token");
+  if (!token) {
+    return c.json({ error: { message: "Missing verification token." } }, 400);
+  }
+  const db = getFlareMoDb(c.env);
+  const { createFlareMoAuth } = await loadAuthFactory();
+  const auth = createFlareMoAuth(c.env, db);
+  const authUserId = await auth.consumeEmailVerificationToken(token);
+  if (!authUserId) {
+    return c.json(
+      { error: { message: "Verification link is invalid or expired." } },
+      400,
+    );
+  }
+  await auth.markEmailVerified(authUserId);
+  return c.json({ ok: true });
+});
+
+const emailRequestSchema = z.object({
+  email: z.string().trim().email().max(320),
+});
+
+authApi.post(
+  "/resend-verification",
+  zValidator("json", emailRequestSchema),
+  async (c) => {
+    const throttled = await rateLimitGuard(c, "email");
+    if (throttled) return throttled;
+    const db = getFlareMoDb(c.env);
+    if ((await resolveEmailSendConfig(c.env, db)).provider === "none") {
+      return c.json(
+        { error: { message: "Email verification is not enabled." } },
+        400,
+      );
+    }
+    const { createFlareMoAuth } = await loadAuthFactory();
+    let auth: FlareMoAuth;
+    try {
+      auth = createFlareMoAuth(c.env, db);
+    } catch {
+      return c.json(
+        { error: { message: "Native authentication is not configured." } },
+        503,
+      );
+    }
+    try {
+      const input = c.req.valid("json");
+      const user = await auth.findAuthUserByEmail(input.email);
+      // Unknown addresses and already-verified identities share the same
+      // success shape so this endpoint cannot enumerate accounts.
+      if (!user || user.emailVerified) {
+        return c.json({ ok: true });
+      }
+      const token = await auth.createEmailVerificationToken(user.id);
+      const sent = await sendVerificationEmail(c.env, db, {
+        to: user.email,
+        token,
+        publicUrl: getPublicUrl(c.env),
+        acceptLanguage: c.req.header("accept-language"),
+      });
+      if (!sent) {
+        return c.json(
+          { error: { message: "Verification email could not be sent." } },
+          502,
+        );
+      }
+      return c.json({ ok: true });
+    } catch (error) {
+      return jsonError(c, error);
+    }
+  },
+);
+
+authApi.post(
+  "/forgot-password",
+  zValidator("json", emailRequestSchema),
+  async (c) => {
+    const throttled = await rateLimitGuard(c, "email");
+    if (throttled) return throttled;
+    const db = getFlareMoDb(c.env);
+    if ((await resolveEmailSendConfig(c.env, db)).provider === "none") {
+      return c.json(
+        { error: { message: "Password reset email is not configured." } },
+        400,
+      );
+    }
+    const { createFlareMoAuth } = await loadAuthFactory();
+    let auth: FlareMoAuth;
+    try {
+      auth = createFlareMoAuth(c.env, db);
+    } catch {
+      return c.json(
+        { error: { message: "Native authentication is not configured." } },
+        503,
+      );
+    }
+    try {
+      const input = c.req.valid("json");
+      const user = await auth.findAuthUserByEmail(input.email);
+      // The response never distinguishes known from unknown addresses so the
+      // endpoint cannot be used to enumerate registered emails.
+      if (!user) {
+        return c.json({ ok: true });
+      }
+      const token = await auth.createPasswordResetToken(user.id);
+      const sent = await sendPasswordResetEmail(c.env, db, {
+        to: user.email,
+        token,
+        publicUrl: getPublicUrl(c.env),
+        acceptLanguage: c.req.header("accept-language"),
+      });
+      if (!sent) {
+        return c.json(
+          { error: { message: "Password reset email could not be sent." } },
+          502,
+        );
+      }
+      return c.json({ ok: true });
+    } catch (error) {
+      return jsonError(c, error);
+    }
+  },
+);
+
+authApi.get("/verify-email-change", async (c) => {
+  const token = c.req.query("token");
+  if (!token) {
+    return c.json({ error: { message: "Missing verification token." } }, 400);
+  }
+  const db = getFlareMoDb(c.env);
+  const { createFlareMoAuth } = await loadAuthFactory();
+  const auth = createFlareMoAuth(c.env, db);
+  const change = await auth.consumeEmailChangeToken(token);
+  if (!change) {
+    return c.json(
+      { error: { message: "Verification link is invalid or expired." } },
+      400,
+    );
+  }
+  try {
+    // Re-check occupancy at confirmation time: the target address may have
+    // been claimed between the change request and this click.
+    const existing = await auth.findAuthUserByEmail(change.newEmail);
+    if (existing && existing.id !== change.authUserId) {
+      return c.json(
+        { error: { message: "That email is already in use." } },
+        409,
+      );
+    }
+    const flaremoUser = await getFlaremoUserByAuthUserId(db, change.authUserId);
+    if (!flaremoUser) {
+      throw new NotFoundError("Account not found");
+    }
+    await auth.changeEmail({
+      currentEmail: change.currentEmail,
+      newEmail: change.newEmail,
+    });
+    await updateFlaremoUserEmail(db, flaremoUser, change.newEmail);
+    return c.json({ ok: true });
+  } catch (error) {
+    return jsonError(c, error);
+  }
+});
+
+authApi.post("/bootstrap", zValidator("json", bootstrapSchema), async (c) => {
+  const bootstrapSecret = getBootstrapSecret(c.env);
+  if (!bootstrapSecret) {
+    return c.json(
+      { error: { message: "Initial setup is not configured." } },
+      503,
+    );
+  }
+
+  const suppliedSecret = c.req.header("x-flaremo-bootstrap-secret");
+  if (!(await secretsMatch(suppliedSecret, bootstrapSecret))) {
+    return c.json(
+      { error: { message: "Initial setup is not authorized." } },
+      403,
+    );
+  }
+
+  const db = getFlareMoDb(c.env);
+  const { createFlareMoAuth } = await loadAuthFactory();
+  let auth: FlareMoAuth;
+  try {
+    auth = createFlareMoAuth(c.env, db, { allowBootstrapSignUp: true });
+  } catch {
+    return c.json(
+      { error: { message: "Native authentication is not configured." } },
+      503,
+    );
+  }
+
+  const status = await getAuthBootstrapStatus(db);
+  if (status.state !== "ready") {
+    return c.json(
+      {
+        error: {
+          message:
+            "Initial setup is unavailable. Contact the administrator for recovery.",
+        },
+      },
+      409,
+    );
+  }
+
+  try {
+    await claimOwnerBootstrap(db);
+  } catch (error) {
+    // A concurrent request can pass the initial status check before the
+    // winner persists its singleton claim. Preserve the public 409 contract
+    // instead of letting that expected conflict surface as a generic 500.
+    return jsonError(c, error);
+  }
+  const input = c.req.valid("json");
+  try {
+    const username = await deriveUniqueUsername(db, input.email);
+    const result = await auth.api.signUpEmail({
+      body: {
+        email: input.email,
+        name: input.name,
+        password: input.password,
+        username,
+        displayUsername: input.name,
+      },
+    });
+    await completeOwnerBootstrap(db, {
+      authUserId: result.user.id,
+      singleUser: { email: input.email, name: input.name },
+    });
+    return c.json({ ok: true }, 201);
+  } catch {
+    // At this point an auth identity may already have been created. Keep the
+    // singleton fail-closed and require an intentional operator recovery
+    // rather than risking a second owner initialization.
+    await markOwnerBootstrapRecoveryRequired(db).catch(() => undefined);
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "FlareMo owner bootstrap requires operator recovery",
+      }),
+    );
+    return c.json(
+      {
+        error: {
+          message:
+            "Initial setup could not finish. Contact the administrator for recovery.",
+        },
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Break-glass recovery for an already completed single-user instance.
+ *
+ * This is deliberately not a public "forgot password" flow: no email
+ * provider is configured yet, and the endpoint is disabled unless a separate
+ * recovery secret is explicitly present. It preserves the existing owner
+ * mapping and enters Better Auth's own one-time reset/password hashing flow.
+ * Rotate or remove FLAREMO_RECOVERY_SECRET immediately after use.
+ */
+authApi.post(
+  "/recover",
+  zValidator("json", operatorRecoverySchema),
+  async (c) => {
+    const recoverySecret = getRecoverySecret(c.env);
+    if (!recoverySecret) {
+      return c.json(
+        { error: { message: "Operator recovery is not configured." } },
+        503,
+      );
+    }
+
+    const suppliedSecret = c.req.header("x-flaremo-recovery-secret");
+    if (!(await secretsMatch(suppliedSecret, recoverySecret))) {
+      return c.json(
+        { error: { message: "Operator recovery is not authorized." } },
+        403,
+      );
+    }
+
+    const db = getFlareMoDb(c.env);
+    const authUserId = await getOwnerAuthUserId(db);
+    if (!authUserId) {
+      return c.json(
+        {
+          error: {
+            message:
+              "Operator recovery requires a completed single-user bootstrap.",
+          },
+        },
+        409,
+      );
+    }
+
+    const input = c.req.valid("json");
+    try {
+      const { createFlareMoAuth } = await loadAuthFactory();
+      const auth = createFlareMoAuth(c.env, db);
+      // Password reset invalidates browser sessions through Better Auth. PATs
+      // are a separate credential class, so revoke every existing Memos PAT
+      // before changing the password as well.
+      for (const token of await listMemosPersonalAccessTokens(db, authUserId)) {
+        if (!token.enabled) continue;
+        await auth.api.updateApiKey({
+          body: {
+            configId: "memos",
+            keyId: token.id,
+            userId: authUserId,
+            enabled: false,
+          },
+        });
+      }
+      await auth.operatorResetPassword({
+        authUserId,
+        newPassword: input.new_password,
+      });
+      console.log(
+        JSON.stringify({
+          level: "info",
+          message: "FlareMo operator password recovery completed",
+        }),
+      );
+      return c.json({ ok: true });
+    } catch {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          message: "FlareMo operator password recovery failed",
+        }),
+      );
+      return c.json(
+        { error: { message: "Operator recovery could not complete." } },
+        500,
+      );
+    }
+  },
+);
+
+/**
+ * Reconcile a partial owner bootstrap without accepting credentials or
+ * caller-supplied identity data. The separate recovery secret keeps this
+ * operator-only path closed by default and prevents it from becoming a second
+ * signup flow.
+ */
+authApi.post("/recover-bootstrap", async (c) => {
+  const recoverySecret = getRecoverySecret(c.env);
+  if (!recoverySecret) {
+    return c.json(
+      { error: { message: "Operator recovery is not configured." } },
+      503,
+    );
+  }
+
+  const suppliedSecret = c.req.header("x-flaremo-recovery-secret");
+  if (!(await secretsMatch(suppliedSecret, recoverySecret))) {
+    return c.json(
+      { error: { message: "Operator recovery is not authorized." } },
+      403,
+    );
+  }
+
+  const db = getFlareMoDb(c.env);
+  try {
+    await reconcileOwnerBootstrap(db);
+    console.log(
+      JSON.stringify({
+        level: "info",
+        message: "FlareMo owner bootstrap recovery completed",
+      }),
+    );
+    return c.json({ ok: true });
+  } catch (error) {
+    return jsonError(c, error);
+  }
+});
+
+async function secretsMatch(
+  supplied: string | undefined,
+  expected: string,
+): Promise<boolean> {
+  if (!supplied) return false;
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(supplied)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const leftBytes = new Uint8Array(left);
+  const rightBytes = new Uint8Array(right);
+  let difference = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    difference |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return difference === 0;
+}

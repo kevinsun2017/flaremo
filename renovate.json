@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":pinDigestsDisabled",
+    "schedule:weekly",
+    ":semanticCommitsDisabled"
+  ],
+  "timezone": "Asia/Shanghai",
+  "labels": ["dependencies"],
+  "rangeStrategy": "replace",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "仅 devDependencies 的 patch 允许自动合并（保守）",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "requiredStatusChecks": null
+    },
+    {
+      "description": "Cloudflare 系版本需人工核对 breaking 变更，保持手动升级",
+      "matchPackageNames": [
+        "wrangler",
+        "miniflare",
+        "@cloudflare/workers-types",
+        "workerd"
+      ],
+      "automerge": false
+    }
+  ]
+}

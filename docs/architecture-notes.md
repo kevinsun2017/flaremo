@@ -1,0 +1,493 @@
+# FlareMo 架构设计
+
+这份文档描述 FlareMo 当前的架构方向。它是开源仓库里的结果型设计文档，不是过程记录。后续架构变化应直接修改本文原文。
+
+## 参考仓库
+
+对标与参考对象是三个外部项目，**不随仓库分发**，需要时按下表重新克隆到 `Temp/`（该目录已在 `.gitignore` 中）：
+
+| 项目 | 来源 | 在 FlareMo 中的权重 |
+| --- | --- | --- |
+| `usememos/memos` | `git clone https://github.com/usememos/memos Temp/memos` | 模型、API 与兼容层的主参考 |
+| `blinkospace/blinko` | `git clone https://github.com/blinkospace/blinko Temp/blinko` | 功能参考（AI 检索、附件、引用、编辑器交互） |
+| `XuYouo/MeowNocode` | `git clone https://github.com/XuYouo/MeowNocode Temp/MeowNocode` | 轻量 Cloudflare/D1 笔记应用参考 |
+
+本文下面的权重判断、借鉴点与边界结论都已沉淀在此，克隆只是为了核对上游细节；只读结论不需要本地副本。
+
+## 目标
+
+FlareMo 要做一个 Flomo 风格、面向 Memos 生态构建兼容层、完整运行在 Cloudflare 上的个人知识管理系统。
+
+核心目标：
+
+- 快速记录，打开就能写。
+- 对外提供 Memos 兼容 API，方便复用 Memos 生态。
+- 前端和 API 都运行在 Cloudflare Workers 上。
+- 笔记、用户、关系、分享、设置等主数据存 D1。
+- 附件、导出包、生成资源和音频存 R2。
+- 应用层认证使用 Better Auth；Cloudflare Access 只作为可选外层防线。
+- 后续语义检索和 AI 工作流可以接入 Vectorize 和 Workers AI。
+- 不依赖 VPS、Docker、Postgres、Node 常驻进程或本地文件系统。
+
+## 总体方向
+
+FlareMo 以 Memos 作为生态锚点，但不复制 Memos 的内部实现。
+
+这意味着：
+
+- Memos 的领域模型、资源命名、`/api/v1` 协议、OpenAPI、导入导出和 MCP 方向，是 FlareMo 的对外兼容目标。
+- FlareMo 的内部实现围绕 Cloudflare Workers、D1、R2、Drizzle、Hono 和 TypeScript 重建。
+- 产品体验更接近 Flomo：更快记录、更安静的时间线、更轻的导航、更少后台感和社交感。
+- Blinko 和 MeowNocode 只作为功能参考，不作为架构基底。
+
+当前参考项目的权重：
+
+- `usememos/memos`：MIT，生态最大，是模型、API 和兼容层的主参考。
+- `blinkospace/blinko`：GPL-3.0，适合作为 AI 检索、附件、引用、编辑器交互参考，不适合复制源码作为基底。
+- `XuYouo/MeowNocode`：MIT，适合作为轻量 Cloudflare/D1 笔记应用参考。
+
+FlareMo 的实际目标不是“能导入 Memos 数据的普通笔记 App”，而是“Cloudflare-native 的 Memos-compatible 个人知识系统”。
+
+## 产品定位与兼容边界
+
+FlareMo 的产品目标是 **AI native 的个人知识管理**：一个人用是安静的私人笔记，一个团队用是共享知识库，语义检索、AI 记忆、Agent 读写是产品的原生部分而不是外挂。这与 Memos 的目标不同，因此 **FlareMo 不以「完全兼容 Memos」为目标**。
+
+Memos 在这里的角色是**生态底座**，不是要复刻的对象：
+
+- **兼容是手段，不是目标。** 复用 Memos 的领域模型、资源命名、`/api/v1` 协议、OpenAPI、导入导出和 MCP 方向，是为了直接接上它的客户端、脚本和周边工具生态，少走弯路。
+- **允许并预期超出上游。** Agent Memory、语义检索与「找一找」、项目与任务、音频文稿阅读等能力在 Memos 中没有对应物，属 FlareMo 原生面（`/api/app/*`），由 FlareMo 自己的需求定义，不受上游形态约束。`AIService.Transcribe` 等上游接口在 FlareMo 明确返回 `501`，也说明 AI 是 FlareMo 的独立赛道而非兼容目标。
+- **上游能力按需兼容。** 只在我们需要、且语义说得通的时候接入，不为了对齐而实现无业务价值的上游资源。
+- **与上游分叉是预期结果。** 底座借它的形，路自己走；兼容面不构成产品演进的约束。
+
+### 兼容面的工程纪律
+
+`/api/v1/*` 的**既有字段形状与语义是第三方客户端的契约**，由 `apps/worker/src/compatibility/*.test.ts`、`apps/worker/src/transport/*.test.ts` 等测试锁定。第三方客户端按上游行为编写、不会阅读 FlareMo 文档，因此：
+
+- **只做加法，不改形状。** 新增字段不会破坏兼容（客户端忽略未知字段）；但改动既有字段的语义或类型会让第三方客户端静默出错。
+- **新能力优先落在原生面。** FlareMo 独有能力走 `/api/app/*`（如 branding、account、admin、memory、projects、tasks 已是先例）。
+- **memo payload 是可自由扩展的通道。** `memoPayloadSchema` 为 `.passthrough()`，新增键零 migration、零兼容风险，适合需要随 memo 一起读写、又不想动 `/api/v1` 响应形状的扩展。
+
+这条纪律的目的不是限制演进，而是保证「复用上游生态」与「自行扩展」两条路互不干扰。
+
+## 参考项目定位
+
+### Memos
+
+Memos 是 FlareMo 的主要生态和兼容目标。
+
+值得借鉴：
+
+- 清晰的 memo 领域模型：`content`、`visibility`、`pinned`、`row_status`、creator、created/updated timestamps。
+- 用 `payload` / `property` 承载计算属性，例如 tags、link/task/code 标记、title、location。
+- attachments、memo relations、shares、settings、identities 等独立模型。
+- 时间线优先的产品思路。
+- React Query 缓存和乐观更新策略。
+- Markdown 渲染、编辑器拆分、过滤器、标签、统计、分享图等前端经验。
+- OpenAPI 和 MCP 方向。
+
+不能照搬：
+
+- Go 单体服务。
+- Echo `http.Server`。
+- `database/sql` 和本地 SQLite/Postgres/MySQL 驱动。
+- 本地文件服务。
+- SSE 连接管理。
+- 后台 runner。
+- 多数据库抽象和实例管理后台。
+
+Memos 对 FlareMo 来说是协议、生态和产品模型参考，不是运行时模板。
+
+### Blinko
+
+Blinko 是功能参考，不是架构基底。
+
+值得借鉴：
+
+- 普通搜索升级到 AI / vector search 的产品路径。
+- 附件和 note reference 的交互。
+- note history、internal share、public share、archive/recycle 等状态设计。
+- 编辑器里的 draft persistence、file drop、references、quick capture、hotkeys。
+- embedding pipeline：chunk note content、embed、mark indexed、rebuild index。
+
+不能照搬：
+
+- Bun/Node 后端。
+- Prisma + Postgres。
+- 过宽的全量应用模型：comments、follows、notifications、plugins、MCP servers、AI providers、conversations、scheduled tasks、fonts。
+- GPL-3.0 代码。
+
+### MeowNocode
+
+MeowNocode 是轻量 Cloudflare/D1 参考。
+
+值得借鉴：
+
+- React + Vite 的轻量前端。
+- Cloudflare D1 部署路径。
+- 基础 memo/settings CRUD。
+- 本地优先、导入导出、延迟同步思路。
+- heatmap、daily review、backlinks、canvas mode、public/private toggle 等轻功能。
+
+不能照搬：
+
+- 松散 schema。
+- 共享密码式鉴权。
+- 客户端过重的同步逻辑。
+- 大量二级功能直接混在主页面状态里。
+
+## Cloudflare-native 边界
+
+FlareMo 首先是一个完整可用的笔记和知识管理系统，不是 Cloudflare 全家桶展示项目。
+
+核心路径必须稳定依赖：
+
+- Workers
+- Workers Static Assets
+- D1
+- Drizzle
+- Wrangler
+- R2
+
+其他 Cloudflare 产品按能力边界使用，不作为数据库替代品：
+
+- KV：只在出现明确缓存或配置需求时使用。
+- Durable Objects：只在实时同步、协作、WebSocket、强一致限流或用户级协调真的需要时使用。
+- Queues / Cron：只在链接预览、导出生成、embedding、清理、定期回顾等异步任务出现时使用。
+- Vectorize：只在实现语义搜索时使用。
+- Workers AI：只在实现 AI 功能时使用。
+
+## 认证架构
+
+Better Auth 是 FlareMo 的应用层认证事实源，按请求使用当前 Worker 的 D1 binding 构建，避免把过期或缺失的 binding 捕获在模块级状态中。
+
+当前认证流分成三个互不混淆的边界：
+
+```text
+浏览器
+  Better Auth username/password
+  -> HttpOnly、SameSite=Lax cookie session
+  -> auth_user_links
+  -> 既有 users/owner 和业务数据
+
+脚本 / Memos 客户端 / MCP
+  Authorization: Bearer memos_pat_...
+  -> Better Auth API Key plugin
+  -> auth_user_links
+  -> 既有 FlareMo domain user
+
+公开分享
+  share token + expiration + memo state
+  -> public share data only
+```
+
+首次安装只允许通过 `FLAREMO_BOOTSTRAP_SECRET` 保护的一次性 owner bootstrap 创建账号；正常 Better Auth signup 默认被关闭。bootstrap 成功后，Better Auth 用户通过 `auth_user_links` 映射到既有的 `users/owner`，不重写 memo、attachment、R2 object key 或 share token。owner 可在后台开启开放注册，之后新用户（`users/<uuid>`，role 为 `member`）经 `POST /api/auth/flaremo/register` 或 Memos `signup` 创建，每个身份都有独立的一对一 `auth_user_links` 映射，不需要改变现有资源 ID。
+
+PAT 由 cookie session 或 Better Auth session bearer 下的账户接口创建、列出和撤销，明文只在创建响应返回一次；`memos_pat_` 本身只能访问私有业务数据，不能调用账户 PAT 管理接口。`memos_pat_` 是 FlareMo-native credential，用于保护当前兼容 API 子集，不代表 Memos Server 的完整 auth parity。
+
+邮件能力是可选 seam（`FLAREMO_EMAIL_PROVIDER`）：`none`（自托管默认，零配置）或 `cloudflare`（Workers Paid 的 `EMAIL` binding）。provider 为 `cloudflare` 时，浏览器注册强制邮箱验证（24 小时一次性 token），并解锁三个自助流程：重发验证邮件、邮件找回密码（1 小时 token，走 Better Auth 原生 reset-password，成功后撤销全部 session）、换邮箱验证新地址（确认前旧邮箱继续有效）。此时 Memos 兼容注册面（current `/api/v1/auth/signup`、Connect `AuthService.SignUp`）返回 403，因为兼容客户端无法完成邮箱验证流程。provider 为 `none` 时这些流程全部退回原行为：注册不验证邮箱、密码恢复走管理员兜底（owner 在后台为成员生成一次性重置链接，`auth_verifications` 存 token，用户自行设密，管理员不接触明文）；owner 自己忘记密码时，可用独立 `FLAREMO_RECOVERY_SECRET` 走 `/recover` 页面进入 Better Auth reset-password 流程。恢复成功后撤销全部 session 和 PAT，不创建第二个用户。该 secret 不是登录凭据，恢复结束后必须立即轮换或删除。
+
+凭据端点支持可选的 per-IP 限频：部署通过 Cloudflare rate-limiting binding 绑定 `RATE_LIMITER` 后，注册、重发验证、忘记密码和 Better Auth 的 sign-in/sign-up/reset 路径按 IP 分桶节流（超限返回 429）；未绑定该 binding 的部署行为不变。binding 故障时 fail-open（放行并记录错误日志），限频是加固手段而非正确性闸门。
+
+Cloudflare Access 可以在这三层之前作为外层 policy。它只负责入口门禁，Access identity 或 Service Token 不会自动提供 FlareMo 应用用户身份；启用时请求仍需 cookie session 或 PAT。公开分享可在 Access 上对最窄路径做 bypass，但不跳过 FlareMo share token 校验。
+
+### 按凭据区分的 Origin policy
+
+`FLAREMO_PUBLIC_URL` 加上可选的 `FLAREMO_TRUSTED_ORIGINS` 形成精确 origin allowlist。cookie session 的状态变更请求（`POST`、`PATCH`、`DELETE` 等非安全方法）必须携带并命中该 allowlist；缺失或不匹配时返回 `403`。PAT/Bearer 请求允许无 Origin，以支持桌面脚本和 MCP；如果 PAT 请求带有 Origin，则同样必须命中 allowlist，否则返回 `403`。
+
+该校验只比较完整 origin，不接受 wildcard，也不把 `Referer` 或 Access headers 当作 Origin。它遵循 [Memos 0.30 MCP 文档](https://usememos.com/docs/integrations/mcp) 的 browser-origin 安全方向。当前 `/api/v1` 默认是 current camelCase wire，并提供根 `/mcp` 无状态 Streamable HTTP MCP 子集；这些是有限兼容面，不等于完整 Memos Server parity。
+
+## Memos 兼容策略
+
+兼容不是口号，而是产品能力。
+
+### 数据兼容
+
+- 采用 Memos 风格的核心实体：users、memos、memo relations、attachments、shares、settings。
+- 保留 Memos 资源命名习惯：`memos/{id}`、`users/{id}`、`attachments/{id}`。
+- 保留可映射到 Memos 的 payload/property 结构：tags、title、has_link、has_task_list、has_code、has_incomplete_tasks、location。
+- 提供 Memos 数据导入导出路径。
+
+### REST API 兼容
+
+FlareMo 对外暴露 Memos-compatible `/api/v1`。公共兼容面包括：
+
+- `POST /api/v1/memos`
+- `GET /api/v1/memos`
+- `GET /api/v1/{name=memos/*}`
+- `PATCH /api/v1/{memo.name=memos/*}`
+- `DELETE /api/v1/{name=memos/*}`
+- `PATCH /api/v1/{name=memos/*}/attachments`
+- `GET /api/v1/{name=memos/*}/attachments`
+- `PATCH /api/v1/{name=memos/*}/relations`
+- `GET /api/v1/{name=memos/*}/relations`
+- `POST /api/v1/{parent=memos/*}/shares`
+- `GET /api/v1/shares/{share_id}`
+- `POST /api/v1/attachments`
+- `GET /api/v1/attachments`
+- `GET /api/v1/{name=attachments/*}`
+- `GET /api/v1/{name=attachments/*}/blob`
+- `DELETE /api/v1/{name=attachments/*}`
+- `GET /api/v1/export`
+- `POST /api/v1/import`
+- `GET /openapi.json`
+- `POST /api/v1/mcp`
+- `POST /mcp` stateless Streamable HTTP MCP subset
+
+同时支持：
+
+- 应用层由 Better Auth cookie session 或 `memos_pat_` PAT 负责认证。
+- 默认 `/api/v1` 使用 current camelCase/protobuf-JSON subset；旧 snake_case wire 通过 `X-FlareMo-Wire: legacy` 或 legacy vendor `Accept` 显式选择。
+- current auth facade 由 Better Auth 提供身份事实源，并返回 Memos 风格 HS256 access JWT；`memos_refresh` 是 HttpOnly、轮换并可撤销的 refresh cookie。旧 opaque Better Auth session bearer 仍保留兼容。
+- Cloudflare Access 是可选的外层 policy；启用时脚本和工具要同时携带 Access Service Token 与 FlareMo PAT。
+- 常见分页参数：`page_size`、`page_token`。
+- 常见排序参数：`order_by`。
+- 常见状态过滤：`state`。
+- 常见 filter 表达式。
+
+Access Service Token 只属于 Cloudflare Access 层，不进入 FlareMo 用户
+映射。生产实例如启用 Access，应在 Access application 上配置
+`non_identity` policy，并用 `service_token` selector 绑定允许访问的 token；
+客户端还要发送 FlareMo PAT：
+
+```bash
+CF-Access-Client-Id: <client id>
+CF-Access-Client-Secret: <client secret>
+Authorization: Bearer <memos_pat_...>
+```
+
+公开分享路径单独处理。`/share/*`、`/api/public/shares/*` 和 `/assets/*`
+需要在 Cloudflare Access application 上配置 `bypass` policy，让未登录
+访问者能打开分享页并加载前端静态资源。这个旁路只针对公开分享入口；
+分享内容仍由 FlareMo 的 share token、过期时间和 memo 状态校验控制。
+
+### 生态兼容
+
+- 为 FlareMo 暴露的 `/api/v1` 维护 OpenAPI 文档。
+- 基于 OpenAPI 暴露 MCP endpoint。
+- 响应字段在支持范围内保持 Memos-compatible。
+- UserService webhook 资源的 CRUD/signing-secret 已进入兼容层；四类 memo 事件已有 D1 outbox 的有界异步投递/重试，完整上游事件语义、egress SSRF 防护和完整多用户 ACL 仍是未完成边界。
+- current camelCase wire、Better Auth-backed identity、native JWT/refresh facade、字段/错误翻译、PAT/social 资源、UserService webhook/notification 资源子集、Connect JSON/protobuf/gRPC-Web unary subset、heartbeat SSE 和根 `/mcp` 无状态 Streamable HTTP MCP 子集已实现并有仓库测试；这些仍不等于完整 Memos Server、原生 HTTP/2 gRPC 或第三方客户端 parity。
+
+### 兼容边界
+
+FlareMo 兼容 Memos 生态，不复制 Memos 服务端历史包袱。comments、reactions、shortcuts 和 UserService webhook/notification 已有有限实现，四类 memo 事件已有有界 outbox 投递/重试，但完整 Connect/gRPC、复杂 CEL filter、instance settings、SSO、完整上游 social/notification service 语义、完整 webhook 事件/egress 语义、完整多用户 ACL、admin surfaces、SSE、有状态 MCP session 和第三方客户端实测仍未完成；这些能力只有在它们确实服务 FlareMo 产品目标时才进入实现，不为了追求字面 parity 复制复杂度。
+
+## API 分层
+
+FlareMo 有两层 API。
+
+### `/api/v1/*`
+
+Memos-compatible API surface。除公开分享和 OpenAPI 入口外，业务请求需要 Better Auth cookie session 或 `memos_pat_` PAT。
+
+用于：
+
+- Memos-compatible clients
+- 数据迁移
+- 导入导出
+- 脚本和自动化
+- OpenAPI
+- MCP
+
+### `/api/app/*`
+
+FlareMo 自己的前端 API。
+
+这一层可以更简单、更贴近 Cloudflare 运行时，但必须复用同一套 domain services 和 Drizzle-backed repositories。不能维护两套业务实现。
+
+原生面包含 Agent Memory 管理、语义搜索、branding、通知与推送订阅等资源；projects 与 tasks 是其中两大一等资源：
+
+- `/api/app/projects` 与 `/api/app/tasks`：项目的 CRUD 与任务管理（看板状态、优先级、手动排序、`due_at`）。tasks 为 owner 私有资源，cookie session 与 PAT 均可读写——这是 Memos 兼容面之外的第二个对外写入口。
+- **软删与回收站**：任务删除先入回收站（`deleted_at` 标记，列表默认排除），可还原，到期由每日 TTL 清理任务硬删；项目删除遵循同一回收站语义。
+- **`due_at` 约定**：格式为 `YYYY-MM-DD` 的本地日历日（与 UI 日期输入一致），不带时区与时间部分；日历聚合、逾期 cron 与日期范围过滤均按该格式做字符串比较，写入其他格式会静默脱离日历与逾期提醒。
+- **MCP 任务工具为远期候选**：`/mcp` 目前只暴露 memo 工具、`/memory/mcp` 只暴露 memory 工具；是否向 MCP 暴露任务读写工具，等 tasks/projects 的归属语义（含团队共享的可能形态）稳定后再定契约，避免返工。第三方客户端管理任务暂经 `/api/app/tasks` + PAT。
+
+## 数据模型
+
+D1 是唯一的主数据库，Drizzle schema 是数据库结构事实源。
+
+核心表从 FlareMo 自己的领域模型出发，同时保留到 Memos DTO 的 adapter 路径：
+
+```sql
+users
+  id TEXT PRIMARY KEY
+  email TEXT UNIQUE
+  name TEXT
+  avatar_url TEXT
+  created_at TEXT
+  updated_at TEXT
+
+memos
+  id TEXT PRIMARY KEY
+  user_id TEXT NOT NULL
+  content TEXT NOT NULL
+  visibility TEXT NOT NULL DEFAULT 'private'
+  status TEXT NOT NULL DEFAULT 'normal'
+  pinned INTEGER NOT NULL DEFAULT 0
+  source TEXT DEFAULT 'web'
+  payload TEXT NOT NULL DEFAULT '{}'
+  created_at TEXT NOT NULL
+  updated_at TEXT NOT NULL
+
+memo_relations
+  memo_id TEXT NOT NULL
+  related_memo_id TEXT NOT NULL
+  type TEXT NOT NULL
+  PRIMARY KEY (memo_id, related_memo_id, type)
+
+attachments
+  id TEXT PRIMARY KEY
+  user_id TEXT NOT NULL
+  memo_id TEXT
+  r2_key TEXT NOT NULL
+  filename TEXT NOT NULL
+  content_type TEXT
+  size INTEGER NOT NULL DEFAULT 0
+  payload TEXT NOT NULL DEFAULT '{}'
+  created_at TEXT NOT NULL
+  updated_at TEXT NOT NULL
+
+shares
+  id TEXT PRIMARY KEY
+  memo_id TEXT NOT NULL
+  user_id TEXT NOT NULL
+  token TEXT UNIQUE NOT NULL
+  expires_at TEXT
+  created_at TEXT NOT NULL
+
+settings
+  user_id TEXT NOT NULL
+  key TEXT NOT NULL
+  value TEXT NOT NULL
+  PRIMARY KEY (user_id, key)
+```
+
+Better Auth 的认证表与上述领域表隔离保存：`auth_users`、`auth_sessions`、`auth_accounts`、`auth_verifications`、`auth_apikeys`、`auth_user_links` 和 `auth_bootstrap`。`auth_user_links` 是 auth identity 到 FlareMo domain user 的唯一桥接；保留这层边界可以在未来增加用户映射时不改变既有 memo、attachment 和 share 资源 ID。
+
+payload 示例：
+
+```json
+{
+  "tags": ["idea", "work"],
+  "property": {
+    "title": "",
+    "has_link": true,
+    "has_task_list": false,
+    "has_code": false,
+    "has_incomplete_tasks": false
+  },
+  "location": null,
+  "client_id": "optional-offline-id"
+}
+```
+
+设计原则：
+
+- `content`、`visibility`、`status`、`pinned`、`created_at`、`updated_at` 是列。
+- 附件二进制不进 D1，只在 D1 存 R2 key 和元数据。
+- 向量库或 AI 知识库只存派生索引，不能存权威笔记。
+- 语义搜索返回后必须回 D1 读取权威 memo。
+
+## 前端方向
+
+FlareMo 的前端以 Flomo 式快速收集为中心，不做重后台感。
+
+第一屏应该是：
+
+- 快速输入框
+- 时间线
+- 搜索
+- 标签
+- 基础统计或 activity calendar
+
+产品能力包括：
+
+- 反链
+- 附件
+- 分享
+- 导入导出
+- 每日/每周回顾
+- 语义搜索
+- 问我的笔记
+
+避免：
+
+- 把首页做成管理后台。
+- 一上来引入社交、评论、通知等复杂面。
+- 音乐、背景图等装饰功能进入核心路径。
+- AI 功能压过基础记录体验。
+
+## AI 和语义搜索
+
+AI 和语义搜索是 FlareMo 个人知识管理能力的一部分，但不能成为权威数据源。
+
+基础搜索由 D1 中的权威笔记、标签、时间和状态字段提供。
+
+详细语义搜索边界见 [semantic-search.md](./semantic-search.md)。
+
+语义搜索由 Vectorize 承载派生索引：
+
+- memo 内容切块。
+- 生成 embedding。
+- 写入 Vectorize。
+- 索引记录引用 D1 中的 memo。
+- 搜索命中后回 D1 读取权威 memo 数据。
+
+AI 工作流围绕个人知识库展开：
+
+- 问我的笔记。
+- 每日/每周回顾。
+- 相关笔记推荐。
+- 附件文本抽取。
+- AI 标签建议。
+
+## 工程顺序
+
+下面是依赖顺序，不是产品分期，也不是功能降级。FlareMo 的目标始终是完整产品。
+
+1. 建立 monorepo 和 Workers + Vite + Hono + D1 + Drizzle 基础。
+2. 定义 Drizzle schema 和 D1 migrations。
+3. 建立 domain services：users、memos、attachments、relations、shares、settings、tokens。
+4. 实现 `/api/v1` Memos-compatible 核心 memo endpoints。
+5. 实现 Flomo-like capture + timeline + search + tags。
+6. 实现 Memos 导入导出。
+7. 接入 R2 附件和导出包。
+8. 维护 OpenAPI。
+9. 基于 OpenAPI 增加 MCP。
+10. 接入 Vectorize 和 AI 能力。
+
+## 组装入口与计划限额
+
+worker 的路由表不再挂在模块级常量上，而是由 `createFlareMoApp(options)` 工厂构建：每次调用返回全新 Hono 实例。生产 default export 和外部共享部署应使用 `createFlareMoWorker(options)`：它在同一组注入限额下组合 HTTP 路由、请求后的 webhook/embedding outbox 与 Cron maintenance。`createFlareMoApp` 保留给测试或需要挂载额外路由的高级场景；外部组合壳不能只包一层 `fetch`，否则会悄悄跳过 durable work。
+
+计划限额以注入数据的形式进入请求上下文，而不是散落的条件分支：
+
+- domain 层的 `PlanLimits` 只包含「数字或 null」的字段；`SELF_HOST_UNLIMITED` 是自部署恒定值。domain 不知道订阅概念的存在。
+- `createFlareMoApp` 接受可选的 `resolvePlanLimits(env)`；默认实现恒返回 `SELF_HOST_UNLIMITED`，解析结果经每个请求首个中间件写入 Hono Variables（`planLimits`），`getRequestContext` 系列将其放入返回值的 `limits` 字段。
+- 超限场景使用 `QuotaExceededError`（HTTP 429），走既有 `DomainError` 映射。
+- 本仓库不实现任何订阅解析器；云端 resolver 属于外部组合壳的注入物。
+
+限额不只是被注入，还在内核的四个执行点被真正执行（`packages/domain/src/quotas.ts`）：
+
+1. **附件存储总量**：三条上传路径与两条导入路径在写入 R2 前调用 `assertAttachmentStorageQuota`（对 `attachments` 表 `state='ready'` 求和，部署级）。
+2. **月度 embedding tokens**：outbox 每次 embed 成功后按 `estimateTokenCount`（`ceil(chars/4)` 估算）写入 `usage_counters`；预算耗尽时 sweep 暂停认领（任务保持 pending、不消耗重试次数，次月自动恢复）。全量重建只计量不阻断（恢复路径）。`dispatchEmbeddingOutbox` 的 `limits` 来自调用方——default handler 传 `SELF_HOST_UNLIMITED`，外部组合壳可在自己的 scheduled 入口注入真实限额。
+3. **月度语义搜索次数**：`/api/app/search/semantic` 与 `memory_recall` 语义路径在 embed 前检查 `search_queries` 月度计数（部署级求和），超限抛 429；成功后计入 `search_queries` 与查询 token 估算。
+4. **成员数上限**：`createFlaremoMemberWithLink` 接受可选 `limits`，Web 注册 / 管理员建号 / Memos 注册路径统一预检（注册路径在 Better Auth 身份创建**之前**预检，避免超限时产生孤儿身份）；`ensureSingleUser` bootstrap 永不受限。
+
+`/api/app/usage/vector` 响应附带 `plan`（`PlanUsageReport`：四维度的 used/limit），前端用量面板据此渲染限额进度条；limit 为 null（自托管）的行不渲染。限额为 null 时所有检查旁路，自托管行为零变化。
+
+**Per-user 限额（共享多用户实例）**：部署级限额对「公开注册、多用户共享一个部署」的形态会锁死全体，因此内核还接受一层 per-user 限额（`UserPlanLimits`，只有存储/tokens/搜索三个维度——成员数天然是部署级，不做 per-user 形态）。注入途径：`createFlareMoApp` 的 `resolveUserPlanLimits(env, userId)` 选项，或 `FLAREMO_USER_LIMITS_JSON` 环境变量（用户无关的静态配置）。生效优先级 per-user → 部署级 → 不限量；per-user 生效时用量按该 user 读取（`usage_counters` 本就按 user 分桶，附件存储按 userId 过滤求和），outbox 也按任务归属用户判断预算。`plan` 响应在配置了 per-user 限额时附带 `user` 段，面板渲染「个人限额」分组。
+
+**存量条数维度**：`UserPlanLimits` 另有 `maxMemosPerUser` / `maxMemoryItemsPerUser`（共享实例按条计费的主货币）。条数是存量口径——memo 按 `normal + archived` 计（回收站不算），memory 按 `active + archived` 计。检查在 domain `createMemo` / `createMemory` 内部执行（可选 `scope` 参数沿调用链透传），导入路径以 bundle 条数预检；`additionalCount` 默认 1 表示「一次写入即将发生」，恰好满额允许、超出才 429。Projects/Tasks/引用关系/回顾/导入导出/MCP 接入是零边际成本能力，**不设限**。
+
+## 结论
+
+FlareMo 的架构核心是：
+
+**面向 Memos 生态的兼容 API + Better Auth + FlareMo-native internal model + Cloudflare Workers runtime + D1/Drizzle source of truth。**
+
+对外吃 Memos 生态，对内保持干净，不复制 Memos 的历史包袱，也不为了凑技术栈而引入 Cloudflare 全家桶。
+
+## 主动语音记录
+
+Capture 复用 realtime-context 的浏览器 PCM / 流式 ASR 思路，将服务端适配移入 FlareMo Worker。浏览器以 Better Auth cookie 连接同源 `/api/app/capture/ws`，Worker 校验 Origin、持有腾讯云或 DashScope 凭据并转换事件。录音过程中的文字进入现有 IndexedDB 草稿；入口是输入框的麦克风按钮（独立的 `/capture` 页已在 v0.24.0 删除），转写文字插入草稿后随普通发送调用现有 Memo API，继续使用 D1、FTS 与可选 embedding pipeline。不新增语音数据库、第二套认证或 Python 服务。详细生命周期、音频处理和验收边界见 [Capture 设计](voice-capture-design.md)。

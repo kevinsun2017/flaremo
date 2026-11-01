@@ -1,0 +1,152 @@
+import type {
+  AttachmentDto,
+  ListMemosResponse,
+  MemoDto,
+  MemoRelationDto,
+  MemoRevisionDto,
+  ShareDto,
+} from "@flaremo/contracts";
+import type {
+  AttachmentRow,
+  MemoPayload,
+  MemoRevisionRow,
+  MemoRow,
+  ShareRow,
+  UserRow,
+} from "@flaremo/db";
+import { canEditMemo, canGovernMemo } from "@flaremo/domain";
+
+type MemoRelationRow = {
+  memoId: string;
+  relatedMemoId: string;
+  type: "reference" | "comment";
+  createdAt: string;
+};
+
+export function memoToDto(
+  memo: MemoRow,
+  _user: UserRow,
+  creatorName?: string,
+): MemoDto {
+  return {
+    name: memo.id,
+    id: memo.id.replace(/^memos\//, ""),
+    content: memo.content,
+    visibility: memo.visibility,
+    state: memo.status,
+    pinned: memo.pinned,
+    payload: (memo.payload ?? {}) as MemoPayload,
+    create_time: memo.createdAt,
+    update_time: memo.updatedAt,
+    display_time: memo.createdAt,
+    creator: memo.userId,
+    source: memo.source,
+    ...(creatorName ? { creator_name: creatorName } : {}),
+  };
+}
+
+export function attachmentToDto(attachment: AttachmentRow): AttachmentDto {
+  return {
+    name: attachment.id,
+    id: attachment.id.replace(/^attachments\//, ""),
+    memo: attachment.memoId,
+    filename: attachment.filename,
+    content_type: attachment.contentType,
+    size: attachment.size,
+    state: attachment.state,
+    etag: attachment.etag,
+    payload: attachment.payload ?? {},
+    create_time: attachment.createdAt,
+    update_time: attachment.updatedAt,
+    download_url: `/api/v1/${attachment.id}/blob`,
+    preview_url: `/api/v1/${attachment.id}/blob?disposition=inline`,
+    // Present only when a preview was generated at upload time. Clients use
+    // its absence to fall back to `preview_url` instead of requesting a
+    // thumbnail the server would 404.
+    ...(attachment.payload?.thumbnail === true
+      ? {
+          thumbnail_url: `/api/v1/${attachment.id}/blob?disposition=inline&thumbnail=true`,
+        }
+      : {}),
+  };
+}
+
+export function memoRelationToDto(relation: MemoRelationRow): MemoRelationDto {
+  return {
+    memo: relation.memoId,
+    related_memo: relation.relatedMemoId,
+    type: relation.type,
+    create_time: relation.createdAt,
+  };
+}
+
+export function shareToDto(share: ShareRow): ShareDto {
+  return {
+    name: share.id,
+    id: share.id.replace(/^shares\//, ""),
+    memo: share.memoId,
+    token: share.token,
+    expires_at: share.expiresAt,
+    create_time: share.createdAt,
+    update_time: share.updatedAt,
+    revoked_at: share.revokedAt,
+  };
+}
+
+export function memoRevisionToDto(revision: MemoRevisionRow): MemoRevisionDto {
+  return {
+    name: revision.id,
+    id: revision.id.replace(/^revisions\//, ""),
+    memo: revision.memoId,
+    content: revision.content,
+    visibility: revision.visibility,
+    payload: revision.payload,
+    create_time: revision.createdAt,
+  };
+}
+
+export function memosToListResponse(input: {
+  attachmentsByMemo?: ReadonlyMap<string, AttachmentRow[]>;
+  creatorNames?: ReadonlyMap<string, string>;
+  memos: MemoRow[];
+  user: UserRow;
+  nextPageToken?: string;
+}): ListMemosResponse {
+  return {
+    memos: input.memos.map((memo) => ({
+      ...memoToDto(memo, input.user, input.creatorNames?.get(memo.userId)),
+      // Single source of truth for the edit/manage rules (see canEditMemo
+      // and canGovernMemo); clients must not re-derive team permissions
+      // locally. can_manage covers content edits and republishing, while
+      // can_govern covers archive/trash/restore lifecycle actions.
+      can_manage: canEditMemo(input.user, memo),
+      can_govern: canGovernMemo(input.user, memo),
+      ...(input.attachmentsByMemo
+        ? {
+            attachments: (input.attachmentsByMemo.get(memo.id) ?? []).map(
+              attachmentToDto,
+            ),
+          }
+        : {}),
+    })),
+    ...(input.nextPageToken ? { next_page_token: input.nextPageToken } : {}),
+  };
+}
+
+export function parseMemosResourceName(name: string) {
+  return parseResourceName(name, "memos");
+}
+
+export function parseAttachmentsResourceName(name: string) {
+  return parseResourceName(name, "attachments");
+}
+
+function parseResourceName(
+  name: string,
+  prefix: "attachments" | "memos" | "shares",
+) {
+  if (name.startsWith(`${prefix}/`)) {
+    return name;
+  }
+  return `${prefix}/${name}`;
+}

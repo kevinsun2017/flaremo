@@ -1,0 +1,21 @@
+# 本地开发变量示例。
+# 复制为 .dev.vars 后只填入本机值；不要提交 .dev.vars，也不要把生产凭据写进仓库。
+# BETTER_AUTH_SECRET、FLAREMO_BOOTSTRAP_SECRET 必须使用你自己生成的本地值。
+# FLAREMO_RECOVERY_SECRET 只在本地演练 break-glass recovery 时临时设置。
+
+FLAREMO_SINGLE_USER_EMAIL=owner@example.com
+FLAREMO_SINGLE_USER_NAME=FlareMo Owner
+FLAREMO_PUBLIC_URL=http://localhost:8787
+FLAREMO_TRUSTED_ORIGINS=
+BETTER_AUTH_SECRET=<local-secret-at-least-32-characters>
+FLAREMO_BOOTSTRAP_SECRET=<local-one-time-bootstrap-secret>
+FLAREMO_RECOVERY_SECRET=<local-break-glass-recovery-secret>
+
+# 可选：Cloudflare 资源用量面板（设置→用量）。生产用 `pnpm setup:usage`
+# 写入 Worker secret；本地 dev 想看这块时手动填入（token 只需要
+# Account Analytics: Read 权限）。留空则面板隐藏该区块。
+# FLAREMO_CF_ANALYTICS_TOKEN=<token-with-account-analytics-read>
+# FLAREMO_CF_ACCOUNT_ID=<32-hex-account-id>
+# FLAREMO_CF_WORKER_NAME=flaremo
+# FLAREMO_CF_D1_ID=<d1-database-uuid>
+# FLAREMO_CF_R2_BUCKET=flaremo-attachments

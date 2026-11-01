@@ -1,0 +1,153 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Template for self-hosting. Copy this file to `wrangler.jsonc` (which is
+  // not tracked by Git) and fill in your own values before deploying:
+  //   cp wrangler.jsonc.example wrangler.jsonc
+  // Account-specific identifiers to replace:
+  //   - d1_databases[].database_id: output of `wrangler d1 create flaremo`.
+  //   - vars.FLAREMO_PUBLIC_URL: your public origin, no path/query/hash.
+  // Bucket / queue / Vectorize index names below are suggested defaults;
+  // rename them if you prefer, but keep the binding keys unchanged.
+  // `pnpm deploy` does not create those resources. Create them yourself, or
+  // run `pnpm provision:remote` (the GitHub deploy workflow does this too).
+  "name": "flaremo",
+  "main": "./apps/worker/src/index.ts",
+  "compatibility_date": "2026-07-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "assets": {
+    "directory": "./apps/web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    // "none": a navigation that matches no asset file reaches the Worker,
+    // which serves the SPA shell with 200 for known routes and 404 for
+    // unknown ones (apps/worker/src/spa-routes.ts). The paths below are
+    // worker-rendered outright (SSR share pages, the unenumerable-sitemap
+    // 404, the branded favicon redirect).
+    "run_worker_first": [
+      "/api/*",
+      "/article/*",
+      "/feed.xml",
+      "/file/*",
+      "/mcp",
+      "/memory/*",
+      "/openapi.json",
+      "/memos.api.v1.*",
+      "/share/*",
+      "/sitemap.xml",
+      "/sitemap-articles.xml",
+      "/favicon.ico"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flaremo",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      "bucket_name": "flaremo-attachments"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MEMBER_REMOVAL_QUEUE",
+        "queue": "flaremo-member-removal"
+      },
+      {
+        "binding": "DATA_EXPORT_QUEUE",
+        "queue": "flaremo-data-export"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "flaremo-member-removal",
+        "max_batch_size": 10,
+        "max_retries": 5
+      },
+      {
+        "queue": "flaremo-data-export",
+        "max_batch_size": 5,
+        "max_retries": 5
+      }
+    ]
+  },
+  "vectorize": [
+    {
+      "binding": "VECTORIZE_MEMOS",
+      "index_name": "flaremo-memos"
+    },
+    {
+      "binding": "VECTORIZE_MEMORIES",
+      "index_name": "flaremo-memories"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  // Throttling for credential endpoints (per IP) and paid ASR connection starts
+  // (per authenticated user). Each bucket permits 30 calls/minute/key.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
+  "vars": {
+    "FLAREMO_DEPLOY_REPOSITORY": "",
+    "FLAREMO_SINGLE_USER_EMAIL": "owner@flaremo.local",
+    "FLAREMO_SINGLE_USER_NAME": "FlareMo Owner",
+    // Canonical origin used by Better Auth for callback and cookie checks.
+    // Set this to your public origin; keep secrets out of this file.
+    "FLAREMO_PUBLIC_URL": "",
+    // Optional comma-separated additional browser origins for trusted clients.
+    "FLAREMO_TRUSTED_ORIGINS": "",
+    // Optional Web Push reminders (daily review, overdue tasks). Generate a
+    // keypair with `npx web-push generate-vapid-keys`; both values go here
+    // (the public key is not secret). Omitting either disables push.
+    "FLAREMO_VAPID_PUBLIC_KEY": "",
+    "FLAREMO_VAPID_PRIVATE_KEY": "",
+    // Semantic-search embedding. `workers-ai` uses Cloudflare's own model with
+    // no external key; `http` calls an external REST endpoint; `none` disables
+    // semantic search and falls back to FTS5 keyword search.
+    "FLAREMO_EMBEDDING_PROVIDER": "workers-ai",
+    "FLAREMO_EMBEDDING_MODEL": "@cf/qwen/qwen3-embedding-0.6b",
+    "FLAREMO_EMBEDDING_DIMENSIONS": "1024",
+    // Optional voice capture: dashscope or tencent. Blank model uses the
+    // provider default. Put provider keys in Worker secrets, never public vars.
+    "FLAREMO_ASR_PROVIDER": "dashscope",
+    "FLAREMO_ASR_MODEL": "",
+    "FLAREMO_ASR_TENCENT_APP_ID": "",
+    // Optional Tencent accuracy hint. A console vocabulary ID is a public var.
+    // Configure a private temporary list as a Worker secret instead.
+    "FLAREMO_ASR_TENCENT_HOTWORD_ID": "",
+    // Optional MiniMax batch ASR (speech_to_text). BASE_URL defaults to the
+    // mainland-China site (https://api.minimaxi.com); the international site
+    // is https://api.minimax.io. The API key is a Worker secret:
+    //   pnpm exec wrangler secret put FLAREMO_ASR_MINIMAX_API_KEY
+    "FLAREMO_ASR_MINIMAX_BASE_URL": "",
+    // Optional AES-GCM key (>=32 chars) that encrypts the owner-saved voice
+    // service config at rest. See docs/voice-settings.md for generation and
+    // restore caveats. Set it as a Worker secret, never a public var:
+    //   pnpm exec wrangler secret put FLAREMO_VOICE_CONFIG_KEY
+    // Self-measured vector usage limits for the usage panel. Defaults are the
+    // Workers Free Vectorize allowance (5M stored / 30M queried dims per month).
+    "FLAREMO_VECTORIZE_STORED_LIMIT": "5000000",
+    "FLAREMO_VECTORIZE_QUERIED_LIMIT": "30000000",
+    // CEL memo filters that cannot fully translate to SQL scan up to this
+    // many candidate rows in JS (D1 read quota). Unset = 5000.
+    "FLAREMO_MEMO_FILTER_SCAN_LIMIT": "5000"
+  }
+}

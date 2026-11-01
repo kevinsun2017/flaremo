@@ -1,0 +1,97 @@
+{
+  "name": "flaremo",
+  "license": "AGPL-3.0-only",
+  "version": "0.25.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "flaremo": "./bin/flaremo"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "pnpm --filter @flaremo/web build && pnpm --filter @flaremo/worker dev",
+    "dev:hot": "node ./scripts/dev-hot.mjs",
+    "dev:web": "pnpm --filter @flaremo/web dev",
+    "dev:worker": "pnpm --filter @flaremo/worker dev",
+    "dev:site": "pnpm --filter @flaremo/site dev",
+    "build": "pnpm -r build",
+    "build:site": "pnpm plugins:build && pnpm --filter @flaremo/site build",
+    "check": "pnpm --filter @flaremo/site check && pnpm --filter @flaremo/telegram-bot-example check && pnpm --filter @flaremo/web check && pnpm --filter @flaremo/worker check && pnpm --filter @flaremo/contracts check && pnpm --filter @flaremo/db check && pnpm --filter @flaremo/domain check && pnpm --filter @flaremo/memos check && pnpm --filter @flaremo/plugins check",
+    "lint": "biome check AGENTS.md CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md README.md README.*.md ROADMAP.md SECURITY.md SUPPORT.md llms.txt package.json tsconfig.json tsconfig.base.json vitest.config.ts playwright.config.ts drizzle.config.ts wrangler.jsonc docs scripts harness apps packages plugins tests",
+    "format": "pnpm lint --write",
+    "format:check": "biome ci AGENTS.md CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md README.md README.*.md ROADMAP.md SECURITY.md SUPPORT.md llms.txt package.json tsconfig.json tsconfig.base.json vitest.config.ts playwright.config.ts drizzle.config.ts wrangler.jsonc docs scripts harness apps packages plugins tests",
+    "typecheck": "pnpm --filter @flaremo/site typecheck && pnpm --filter @flaremo/telegram-bot-example typecheck && pnpm --filter @flaremo/web typecheck && pnpm --filter @flaremo/worker typecheck && pnpm --filter @flaremo/contracts typecheck && pnpm --filter @flaremo/db typecheck && pnpm --filter @flaremo/domain typecheck && pnpm --filter @flaremo/memos typecheck && pnpm --filter @flaremo/plugins typecheck",
+    "test": "pnpm test:root && pnpm -r test",
+    "test:root": "vitest run --config ./vitest.config.ts tests/harness",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "verify": "node ./scripts/preflight.mjs",
+    "cf": "cf",
+    "release": "node ./scripts/release.mjs",
+    "persistence:check": "node ./scripts/check-persistence-manifest.mjs",
+    "backup:drill": "node ./scripts/backup-drill.mjs",
+    "backup:drill:remote": "node ./scripts/remote-restore-drill.mjs",
+    "capture:harness:test": "node --test ./scripts/pwa-service-worker.test.mjs ./scripts/transcript-accuracy.test.mjs",
+    "capture:production:check": "node ./scripts/capture-production-check.mjs",
+    "capture:production:test": "node --test ./scripts/capture-production-check.test.mjs",
+    "deploy:preflight": "node ./scripts/deploy-preflight.mjs",
+    "provision:remote": "node ./scripts/provision-cloudflare.mjs",
+    "provision:test": "node --test ./scripts/provision-cloudflare.test.mjs",
+    "secrets:sync": "node ./scripts/sync-worker-secrets.mjs",
+    "secrets:test": "node --test ./scripts/sync-worker-secrets.test.mjs",
+    "setup:usage": "node ./scripts/setup-usage.mjs",
+    "setup:usage:test": "node --test ./scripts/setup-usage.test.mjs",
+    "smoke:check": "node ./scripts/smoke-check.mjs",
+    "smoke:test": "node --test ./scripts/smoke-check.test.mjs",
+    "write-wrangler-config:test": "node --test ./scripts/write-wrangler-config.test.mjs",
+    "screenshots": "node ./scripts/capture-screenshots.mjs",
+    "plugins:build": "tsx ./scripts/plugins-build.ts",
+    "plugin:check": "tsx ./scripts/plugin-check.ts",
+    "plugin:new": "tsx ./scripts/plugin-new.ts",
+    "db:generate": "drizzle-kit generate",
+    "migrate:local": "wrangler d1 migrations apply DB --local --config ./wrangler.jsonc",
+    "migrate:remote": "wrangler d1 migrations apply DB --remote --config ./wrangler.jsonc",
+    "deploy:dry-run": "pnpm --filter @flaremo/web build && wrangler deploy --config ./wrangler.jsonc --dry-run",
+    "startup-graph": "node scripts/startup-graph.mjs",
+    "deploy:dry-run:site": "pnpm build:site && wrangler deploy --config ./apps/site/wrangler.jsonc --dry-run",
+    "deploy": "pnpm deploy:preflight && pnpm --filter @flaremo/web build && pnpm migrate:remote && pnpm --filter @flaremo/worker deploy",
+    "deploy:site": "pnpm build:site && wrangler deploy --config ./apps/site/wrangler.jsonc"
+  },
+  "cloudflare": {
+    "bindings": {
+      "DB": {
+        "description": "Cloudflare D1 database used as the source of truth for memos, users, relations, shares, settings, and attachment metadata."
+      },
+      "ATTACHMENTS": {
+        "description": "Cloudflare R2 bucket used for attachment binaries, export bundles, and other object files."
+      },
+      "FLAREMO_SINGLE_USER_EMAIL": {
+        "description": "Owner email used by the single-user runtime model."
+      },
+      "FLAREMO_SINGLE_USER_NAME": {
+        "description": "Owner display name used by the single-user runtime model."
+      },
+      "FLAREMO_DEPLOY_REPOSITORY": {
+        "description": "GitHub repository created for this deployment, in owner/repository form. FlareMo uses it only to link the owner to the repository's update workflow."
+      }
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.8",
+    "@cloudflare/workers-types": "5.20260708.1",
+    "@playwright/test": "^1.61.1",
+    "@vitest/coverage-v8": "^4.1.12",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.8",
+    "esbuild": "0.28.2",
+    "jsdom": "^30.0.1",
+    "jsonc-parser": "^3.3.1",
+    "miniflare": "^4.20260722.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "cf": "1.0.0-beta.14",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.114.0",
+    "ws": "^8.21.0"
+  }
+}

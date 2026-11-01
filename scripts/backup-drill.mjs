@@ -1,0 +1,300 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { parse as parseJsonc } from "jsonc-parser";
+import {
+  assertDerivedIndexesComplete,
+  buildOrderedDataRestore,
+  buildPersistenceCountsQuery,
+  RESTORE_TABLES,
+  TABLE_EXPORT_ARGS,
+} from "./persistence-manifest.mjs";
+
+const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
+const backupDir = resolve("backups", `drill-${stamp}`);
+const d1Dump = join(backupDir, "d1.sql");
+const d1DataDump = join(backupDir, "d1-data.sql");
+const orderedDataDump = join(backupDir, "d1-data-ordered.sql");
+const report = join(backupDir, "report.md");
+const restorePersistDir = join(backupDir, "restore-d1");
+
+mkdirSync(backupDir, { recursive: true });
+
+const steps = [];
+let sourceCounts;
+let restoredCounts;
+
+step("export local D1 dump", () =>
+  run("pnpm", [
+    "exec",
+    "wrangler",
+    "--config",
+    "./wrangler.jsonc",
+    "d1",
+    "export",
+    "DB",
+    "--local",
+    ...TABLE_EXPORT_ARGS,
+    "--output",
+    d1Dump,
+    "--skip-confirmation",
+  ]),
+);
+
+step("export local D1 data", () =>
+  run("pnpm", [
+    "exec",
+    "wrangler",
+    "--config",
+    "./wrangler.jsonc",
+    "d1",
+    "export",
+    "DB",
+    "--local",
+    ...TABLE_EXPORT_ARGS,
+    "--no-schema",
+    "--output",
+    d1DataDump,
+    "--skip-confirmation",
+  ]),
+);
+
+step("verify D1 dump exists", () => {
+  if (!existsSync(d1Dump)) {
+    throw new Error(`Missing dump: ${d1Dump}`);
+  }
+  const dump = readFileSync(d1Dump, "utf8");
+  if (!dump.includes("CREATE TABLE") && !dump.includes("INSERT INTO")) {
+    throw new Error("D1 dump does not look like a SQL backup.");
+  }
+  for (const table of RESTORE_TABLES) {
+    // wrangler d1 export quotes table names inconsistently: usually with
+    // backticks, but some tables (e.g. memos_notifications, tasks) come out
+    // double-quoted with IF NOT EXISTS. Accept either spelling — a table is
+    // only missing if neither appears.
+    const present =
+      dump.includes(`CREATE TABLE \`${table}\``) ||
+      dump.includes(`CREATE TABLE IF NOT EXISTS "${table}"`);
+    if (!present) {
+      throw new Error(`D1 dump is missing the ${table} table.`);
+    }
+  }
+  if (dump.includes("CREATE VIRTUAL TABLE")) {
+    throw new Error("D1 dump unexpectedly contains a virtual table.");
+  }
+});
+
+step("snapshot source D1 counts and derived indexes", () => {
+  sourceCounts = queryLocalCounts();
+  assertDerivedIndexesComplete(sourceCounts);
+});
+
+step("prepare ordered D1 data restore file", () => {
+  const dataDump = readFileSync(d1DataDump, "utf8");
+  writeFileSync(orderedDataDump, buildOrderedDataRestore(dataDump));
+});
+
+step("create isolated restore schema from migrations", () =>
+  run("pnpm", [
+    "exec",
+    "wrangler",
+    "--config",
+    "./wrangler.jsonc",
+    "d1",
+    "migrations",
+    "apply",
+    "DB",
+    "--local",
+    "--persist-to",
+    restorePersistDir,
+  ]),
+);
+
+step("restore D1 data into isolated local database", () =>
+  run("pnpm", [
+    "exec",
+    "wrangler",
+    "--config",
+    "./wrangler.jsonc",
+    "d1",
+    "execute",
+    "DB",
+    "--local",
+    "--persist-to",
+    restorePersistDir,
+    "--file",
+    orderedDataDump,
+    "--yes",
+  ]),
+);
+
+step("compare restored D1 source-of-truth counts", () => {
+  restoredCounts = queryLocalCounts(restorePersistDir);
+  for (const table of RESTORE_TABLES) {
+    if (sourceCounts[table] !== restoredCounts[table]) {
+      throw new Error(
+        `${table} mismatch: source=${sourceCounts[table]} restored=${restoredCounts[table]}`,
+      );
+    }
+  }
+  assertDerivedIndexesComplete(restoredCounts);
+});
+
+step("list remote D1 migrations", () =>
+  run("pnpm", [
+    "exec",
+    "wrangler",
+    "--config",
+    "./wrangler.jsonc",
+    "d1",
+    "migrations",
+    "list",
+    "DB",
+    "--remote",
+  ]),
+);
+step("verify R2 bucket exists", () => {
+  // Read the expected name from the deployment's own config: the template
+  // default (`flaremo-attachments`) is only a suggestion, and a hardcoded
+  // check failed every deployment that named its bucket anything else —
+  // including this repo's own, which is `flaremo`.
+  const bucket = attachmentBucketName();
+  const result = run(
+    "pnpm",
+    [
+      "exec",
+      "wrangler",
+      "--config",
+      "./wrangler.jsonc",
+      "r2",
+      "bucket",
+      "list",
+    ],
+    { capture: true },
+  );
+  if (!result.stdout.includes(bucket)) {
+    throw new Error(`R2 bucket ${bucket} was not found.`);
+  }
+  process.stdout.write(result.stdout);
+});
+
+writeFileSync(
+  report,
+  [
+    "# FlareMo Backup Drill",
+    "",
+    `- Created at: ${new Date().toISOString()}`,
+    `- D1 dump: ${d1Dump}`,
+    `- D1 data restore file: ${orderedDataDump}`,
+    `- Restore target: ${restorePersistDir}`,
+    `- Source counts: ${JSON.stringify(sourceCounts)}`,
+    `- Restored counts: ${JSON.stringify(restoredCounts)}`,
+    "",
+    "## Steps",
+    "",
+    ...steps.map((item) => `- ${item}`),
+    "",
+    "## Restore Notes",
+    "",
+    "1. Create a fresh D1 database and R2 bucket.",
+    "2. Apply FlareMo migrations to the fresh D1 database.",
+    "3. Restore D1 data from the ordered data restore file generated by this drill. The file places identity roots before dependent records, restores every source-of-truth table from the persistence manifest, then recreates pending embedding work from D1 rows.",
+    "4. Better Auth session rows and API-key hashes are sensitive backup data; keep the drill output private and never treat it as a public fixture.",
+    "5. The migrations and insert triggers rebuild derived `memos_fts` and `memory_fts` indexes; do not restore FTS shadow tables. Bind a fresh or explicitly cleared Vectorize index before letting the restored embedding outbox run.",
+    "6. Restore R2 objects with an S3-compatible sync tool such as rclone.",
+    "7. Update `wrangler.jsonc` bindings and run `pnpm deploy:dry-run` before deploy.",
+    "",
+  ].join("\n"),
+);
+
+console.log(`Backup drill report: ${report}`);
+
+/**
+ * The R2 bucket this deployment actually binds, from `wrangler.jsonc`.
+ * `wrangler.jsonc` is gitignored and per-deployment, so a missing or
+ * unparsable file is reported rather than silently skipping the check.
+ */
+function attachmentBucketName() {
+  const errors = [];
+  const config = parseJsonc(
+    readFileSync(resolve("wrangler.jsonc"), "utf8"),
+    errors,
+    { allowTrailingComma: true },
+  );
+  if (errors.length || !config || typeof config !== "object") {
+    throw new Error("Could not parse wrangler.jsonc for the R2 binding.");
+  }
+  const entry = config.r2_buckets?.find?.(
+    (candidate) => candidate?.binding === "ATTACHMENTS",
+  );
+  const name = entry?.bucket_name;
+  if (typeof name !== "string" || !name) {
+    throw new Error(
+      "wrangler.jsonc is missing the ATTACHMENTS bucket binding.",
+    );
+  }
+  return name;
+}
+
+function queryLocalCounts(persistTo) {
+  const persistArgs = persistTo ? ["--persist-to", persistTo] : [];
+  const result = run(
+    "pnpm",
+    [
+      "exec",
+      "wrangler",
+      "--config",
+      "./wrangler.jsonc",
+      "d1",
+      "execute",
+      "DB",
+      "--local",
+      "--command",
+      buildPersistenceCountsQuery(),
+      "--json",
+      ...persistArgs,
+    ],
+    { capture: true },
+  );
+  const payload = JSON.parse(result.stdout);
+  if (!payload[0]?.success) throw new Error("Local D1 count query failed.");
+  return payload[0].results?.[0] ?? {};
+}
+
+function step(name, fn) {
+  try {
+    fn();
+    steps.push(`${name}: ok`);
+  } catch (error) {
+    steps.push(`${name}: failed`);
+    writeFileSync(
+      report,
+      `# FlareMo Backup Drill\n\nFailed step: ${name}\n\n${String(error)}\n`,
+    );
+    throw error;
+  }
+}
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+    shell: process.platform === "win32",
+  });
+
+  if (result.status !== 0) {
+    if (options.capture) {
+      process.stderr.write(result.stderr);
+      process.stdout.write(result.stdout);
+    }
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status}`,
+    );
+  }
+
+  if (options.capture && result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+
+  return result;
+}

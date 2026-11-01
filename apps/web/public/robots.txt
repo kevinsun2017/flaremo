@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /file/
+Disallow: /mcp
+Disallow: /memory/mcp
+Disallow: /memos.api.v1

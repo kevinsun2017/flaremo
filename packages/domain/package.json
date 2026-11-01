@@ -1,0 +1,26 @@
+{
+  "name": "@flaremo/domain",
+  "license": "AGPL-3.0-only",
+  "version": "0.25.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b --pretty false",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@flaremo/contracts": "workspace:*",
+    "@flaremo/db": "workspace:*",
+    "@marcbachmann/cel-js": "8.0.0",
+    "drizzle-orm": "^0.45.1",
+    "transliteration": "^2.6.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

@@ -1,0 +1,452 @@
+import type { AttachmentRow, FlareMoDb, UserRow } from "@flaremo/db";
+import { attachments, memos } from "@flaremo/db";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
+import { chunkForD1, d1IdsPerStatement } from "./d1-limits";
+import { ValidationError } from "./errors";
+import { parseResourceName } from "./ids";
+import { getMemoById, getMemoByIdForViewer } from "./memos";
+import { assertCanEditMemo, memoReadScope } from "./team-permissions";
+
+export type ListAttachmentsInput = {
+  memoId?: string;
+  pageSize?: number;
+};
+
+export type AttachmentListFilter = {
+  memoId?: string;
+  filenameEquals?: string;
+  filenameContains?: string;
+  contentType?: string;
+};
+
+export type ListAttachmentsPageInput = ListAttachmentsInput & {
+  pageToken?: string;
+  filter?: AttachmentListFilter;
+  /**
+   * A compiled upstream CEL predicate. The domain still owns the base
+   * visibility/state boundary; this predicate is only evaluated against rows
+   * that are already scoped to the current user.
+   */
+  filterPredicate?: (attachment: AttachmentRow) => boolean;
+  filterExpression?: string;
+  orderBy?: string;
+};
+
+export type AttachmentListResult = {
+  attachments: AttachmentRow[];
+  nextPageToken?: string;
+  totalSize: number;
+};
+
+type AttachmentCursor = {
+  id: string;
+  sortValue: string;
+  orderBy: string;
+  scopeKey: string;
+};
+
+const MAX_ATTACHMENT_FILTER_SCAN = 10_000;
+
+export async function listAttachments(
+  db: FlareMoDb,
+  user: UserRow,
+  input: ListAttachmentsInput = {},
+) {
+  const filters = [
+    isNull(attachments.deletedAt),
+    eq(attachments.state, "ready"),
+  ];
+  if (input.memoId) {
+    const memoId = parseResourceName(input.memoId, "memos");
+    await getMemoById(db, user, memoId);
+    filters.push(eq(attachments.memoId, memoId));
+  } else {
+    filters.push(eq(attachments.userId, user.id));
+  }
+
+  return db
+    .select()
+    .from(attachments)
+    .where(and(...filters))
+    .orderBy(desc(attachments.createdAt))
+    .limit(input.pageSize ?? 50);
+}
+
+/**
+ * List attachments using the upstream AttachmentService cursor contract.
+ *
+ * The current Memos service accepts rich CEL filters, but accepting arbitrary
+ * expressions in a Worker would make both cost and authorization behavior
+ * difficult to bound. The route parses a deliberately small filter subset
+ * into this typed input, while this domain function owns the user/deleted/R2
+ * visibility boundary and the stable cursor semantics.
+ */
+export async function listAttachmentsPage(
+  db: FlareMoDb,
+  user: UserRow,
+  input: ListAttachmentsPageInput = {},
+): Promise<AttachmentListResult> {
+  const pageSize = normalizeAttachmentPageSize(input.pageSize);
+  const orderBy = normalizeAttachmentOrderBy(input.orderBy);
+  const memoId = input.memoId
+    ? parseResourceName(input.memoId, "memos")
+    : undefined;
+  const filterMemoId = input.filter?.memoId
+    ? parseResourceName(input.filter.memoId, "memos")
+    : undefined;
+  if (memoId && filterMemoId && memoId !== filterMemoId) {
+    throw new ValidationError("Attachment memo filters must match");
+  }
+  const scopeKey = JSON.stringify({
+    memoId: memoId ?? filterMemoId ?? null,
+    filter: input.filter ?? null,
+    filterExpression: input.filterExpression ?? null,
+  });
+  const cursor = input.pageToken
+    ? decodeAttachmentPageToken(input.pageToken, orderBy, scopeKey)
+    : undefined;
+  const filters = [
+    isNull(attachments.deletedAt),
+    eq(attachments.state, "ready"),
+  ];
+  const scopedMemoId = memoId ?? filterMemoId;
+  if (scopedMemoId) {
+    await getMemoById(db, user, scopedMemoId);
+    filters.push(eq(attachments.memoId, scopedMemoId));
+  } else {
+    filters.push(eq(attachments.userId, user.id));
+  }
+  if (!input.filterPredicate && input.filter?.filenameEquals !== undefined) {
+    filters.push(eq(attachments.filename, input.filter.filenameEquals));
+  }
+  if (!input.filterPredicate && input.filter?.filenameContains !== undefined) {
+    filters.push(
+      sql`${attachments.filename} LIKE ${`%${escapeAttachmentLike(input.filter.filenameContains)}%`} ESCAPE '\\'`,
+    );
+  }
+  if (!input.filterPredicate && input.filter?.contentType !== undefined) {
+    filters.push(eq(attachments.contentType, input.filter.contentType));
+  }
+
+  const sortColumn = orderBy.startsWith("filename")
+    ? attachments.filename
+    : attachments.createdAt;
+  const direction = orderBy.endsWith(" asc") ? "asc" : "desc";
+  const baseWhere = and(...filters);
+
+  if (input.filterPredicate) {
+    // CEL filters are evaluated after the SQL owner/state boundary. Fetching
+    // the complete bounded candidate set before applying the cursor is
+    // important: applying the cursor in SQL first would skip matching rows
+    // hidden behind non-matching attachments and produce incorrect pages.
+    const candidates = await db
+      .select()
+      .from(attachments)
+      .where(baseWhere)
+      .orderBy(
+        direction === "asc" ? asc(sortColumn) : desc(sortColumn),
+        direction === "asc" ? asc(attachments.id) : desc(attachments.id),
+      )
+      .limit(MAX_ATTACHMENT_FILTER_SCAN + 1);
+    if (candidates.length > MAX_ATTACHMENT_FILTER_SCAN) {
+      throw new ValidationError(
+        "Attachment filter exceeds the bounded Worker scan limit",
+      );
+    }
+
+    const matching = candidates.filter(input.filterPredicate);
+    const afterCursor = cursor
+      ? matching.filter((attachment) =>
+          direction === "asc"
+            ? attachmentSortIsAfter(attachment, cursor, sortColumn)
+            : attachmentSortIsBefore(attachment, cursor, sortColumn),
+        )
+      : matching;
+    const page = afterCursor.slice(0, pageSize);
+    const next = afterCursor.length > pageSize ? page.at(-1) : undefined;
+    return {
+      attachments: page,
+      totalSize: matching.length,
+      nextPageToken: next
+        ? encodeAttachmentPageToken({
+            id: next.id,
+            sortValue: orderBy.startsWith("filename")
+              ? next.filename
+              : next.createdAt,
+            orderBy,
+            scopeKey,
+          })
+        : undefined,
+    };
+  }
+
+  if (cursor) {
+    const cursorFilter =
+      direction === "asc"
+        ? or(
+            gt(sortColumn, cursor.sortValue),
+            and(
+              eq(sortColumn, cursor.sortValue),
+              gt(attachments.id, cursor.id),
+            ),
+          )
+        : or(
+            lt(sortColumn, cursor.sortValue),
+            and(
+              eq(sortColumn, cursor.sortValue),
+              lt(attachments.id, cursor.id),
+            ),
+          );
+    if (cursorFilter) filters.push(cursorFilter);
+  }
+
+  const [rows, total] = await Promise.all([
+    db
+      .select()
+      .from(attachments)
+      .where(and(...filters))
+      .orderBy(
+        direction === "asc" ? asc(sortColumn) : desc(sortColumn),
+        direction === "asc" ? asc(attachments.id) : desc(attachments.id),
+      )
+      .limit(pageSize + 1),
+    db
+      .select({ count: count(attachments.id) })
+      .from(attachments)
+      .where(baseWhere)
+      .get(),
+  ]);
+  const page = rows.slice(0, pageSize);
+  const next = rows.length > pageSize ? page.at(-1) : undefined;
+  return {
+    attachments: page,
+    totalSize: Number(total?.count ?? 0),
+    nextPageToken: next
+      ? encodeAttachmentPageToken({
+          id: next.id,
+          sortValue: orderBy.startsWith("filename")
+            ? next.filename
+            : next.createdAt,
+          orderBy,
+          scopeKey,
+        })
+      : undefined,
+  };
+}
+
+function attachmentSortIsAfter(
+  attachment: AttachmentRow,
+  cursor: AttachmentCursor,
+  sortColumn: typeof attachments.filename | typeof attachments.createdAt,
+) {
+  const sortValue =
+    sortColumn === attachments.filename
+      ? attachment.filename
+      : attachment.createdAt;
+  return (
+    sortValue > cursor.sortValue ||
+    (sortValue === cursor.sortValue && attachment.id > cursor.id)
+  );
+}
+
+function attachmentSortIsBefore(
+  attachment: AttachmentRow,
+  cursor: AttachmentCursor,
+  sortColumn: typeof attachments.filename | typeof attachments.createdAt,
+) {
+  const sortValue =
+    sortColumn === attachments.filename
+      ? attachment.filename
+      : attachment.createdAt;
+  return (
+    sortValue < cursor.sortValue ||
+    (sortValue === cursor.sortValue && attachment.id < cursor.id)
+  );
+}
+
+export async function listMemoAttachments(
+  db: FlareMoDb,
+  user: UserRow,
+  memoId: string,
+) {
+  const normalizedMemoId = parseResourceName(memoId, "memos");
+  await getMemoById(db, user, normalizedMemoId);
+  return listAttachments(db, user, { memoId: normalizedMemoId, pageSize: 100 });
+}
+
+export async function listMemoAttachmentsForViewer(
+  db: FlareMoDb,
+  user: UserRow | null,
+  memoId: string,
+) {
+  const normalizedMemoId = parseResourceName(memoId, "memos");
+  await getMemoByIdForViewer(db, user, normalizedMemoId);
+  return db
+    .select()
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.memoId, normalizedMemoId),
+        isNull(attachments.deletedAt),
+        eq(attachments.state, "ready"),
+      ),
+    )
+    .orderBy(desc(attachments.createdAt))
+    .limit(100);
+}
+
+export async function listAllMemoAttachments(
+  db: FlareMoDb,
+  user: UserRow,
+  memoId: string,
+) {
+  const normalizedMemoId = parseResourceName(memoId, "memos");
+  const memo = await getMemoById(db, user, normalizedMemoId, {
+    includeDeleted: true,
+  });
+  assertCanEditMemo(user, memo);
+  return db
+    .select()
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.memoId, normalizedMemoId),
+        isNull(attachments.deletedAt),
+      ),
+    );
+}
+
+export async function markMemoAttachmentsDeleting(
+  db: FlareMoDb,
+  user: UserRow,
+  memoId: string,
+) {
+  const rows = await listAllMemoAttachments(db, user, memoId);
+  if (rows.length === 0) return rows;
+  const now = new Date().toISOString();
+  // A memo with more than 100 attachments would otherwise bind past the cap
+  // and leave the delete half-applied.
+  for (const idChunk of chunkForD1(
+    rows.map((attachment) => attachment.id),
+    d1IdsPerStatement(),
+  )) {
+    await db
+      .update(attachments)
+      .set({ state: "deleting", updatedAt: now })
+      .where(inArray(attachments.id, idChunk));
+  }
+  return rows;
+}
+
+export async function listAttachmentsForMemos(
+  db: FlareMoDb,
+  user: UserRow,
+  memoIds: string[],
+) {
+  return listAttachmentsForMemosForViewer(db, user, memoIds);
+}
+
+export async function listAttachmentsForMemosForViewer(
+  db: FlareMoDb,
+  user: UserRow | null,
+  memoIds: string[],
+) {
+  if (memoIds.length === 0) return [];
+
+  // Connect/Social lists hydrate attachments for a whole page at once. The
+  // scalar subquery binds one parameter per memo id, so an unbounded page blew
+  // the 100-parameter cap; chunking keeps every statement legal and the merge
+  // preserves the single-query ordering.
+  const rows: Array<typeof attachments.$inferSelect> = [];
+  for (const idChunk of chunkForD1(memoIds, d1IdsPerStatement(2))) {
+    const allowedMemoIds = db
+      .select({ id: memos.id })
+      .from(memos)
+      .where(and(memoReadScope(user), inArray(memos.id, idChunk)));
+    rows.push(
+      ...(await db
+        .select()
+        .from(attachments)
+        .where(
+          and(
+            inArray(attachments.memoId, allowedMemoIds),
+            isNull(attachments.deletedAt),
+            eq(attachments.state, "ready"),
+          ),
+        )
+        .orderBy(desc(attachments.createdAt))),
+    );
+  }
+  rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return rows;
+}
+
+function normalizeAttachmentPageSize(value: number | undefined) {
+  if (value === undefined) return 50;
+  if (!Number.isInteger(value) || value < 1) {
+    throw new ValidationError(
+      "Attachment page size must be a positive integer",
+    );
+  }
+  return Math.min(value, 1_000);
+}
+
+function normalizeAttachmentOrderBy(value: string | undefined) {
+  const normalized = (
+    value?.trim().toLowerCase() || "create_time desc"
+  ).replace("createtime", "create_time");
+  const [field = "create_time", direction = "desc"] = normalized.split(/\s+/);
+  if (
+    !["create_time", "filename"].includes(field) ||
+    !["asc", "desc"].includes(direction)
+  ) {
+    throw new ValidationError(
+      "Attachment order_by only supports create_time or filename asc/desc",
+    );
+  }
+  return `${field} ${direction}`;
+}
+
+function encodeAttachmentPageToken(cursor: AttachmentCursor) {
+  return btoa(JSON.stringify(cursor));
+}
+
+function decodeAttachmentPageToken(
+  token: string,
+  orderBy: string,
+  scopeKey: string,
+): AttachmentCursor {
+  try {
+    const cursor = JSON.parse(atob(token)) as Partial<AttachmentCursor>;
+    if (
+      typeof cursor.id === "string" &&
+      typeof cursor.sortValue === "string" &&
+      cursor.orderBy === orderBy &&
+      cursor.scopeKey === scopeKey
+    ) {
+      return cursor as AttachmentCursor;
+    }
+  } catch {
+    // Fall through to one stable validation error.
+  }
+  throw new ValidationError("Invalid attachment page token");
+}
+
+function escapeAttachmentLike(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("%", "\\%")
+    .replaceAll("_", "\\_");
+}

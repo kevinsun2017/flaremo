@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Updated by the bootstrap script below and by ThemeProvider so the
+         browser chrome / iOS status bar tracks the resolved theme. -->
+    <meta data-flaremo-theme-color name="theme-color" content="#faf9f7" />
+    <link
+      data-dark-href="/brand/flaremo-mark-dark-320.png"
+      data-flaremo-favicon
+      data-light-href="/brand/flaremo-mark-light-300.png"
+      href="/brand/flaremo-mark-light-300.png"
+      rel="icon"
+      type="image/png"
+    />
+    <link rel="apple-touch-icon" href="/brand/flaremo-app-icon-touch-180.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FlareMo" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>FlareMo</title>
+    <script>
+      try {
+        const theme = localStorage.getItem("theme") || "system";
+        const resolved =
+          theme === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : theme;
+        document.documentElement.classList.add(resolved);
+        const favicon = document.querySelector("[data-flaremo-favicon]");
+        const faviconHref = favicon?.dataset[
+          resolved === "dark" ? "darkHref" : "lightHref"
+        ];
+        if (faviconHref) favicon.href = faviconHref;
+        const themeColor = document.querySelector(
+          "[data-flaremo-theme-color]",
+        );
+        if (themeColor) {
+          themeColor.content = resolved === "dark" ? "#0d0c0b" : "#faf9f7";
+        }
+      } catch {}
+      // Mirror I18nProvider's resolution (stored preference, else navigator)
+      // before first paint: `lang` picks the CJK font family per script, and
+      // `dir` keeps Arabic from painting LTR and then flipping on hydration.
+      // Keep this list in sync with the Locale union in src/i18n.tsx.
+      try {
+        const locales = ["zh-CN", "en-US", "ja", "fr", "es", "ko", "ru", "ar"];
+        const base = (value) => value.toLowerCase().split("-")[0];
+        const stored = localStorage.getItem("flaremo.locale");
+        let locale = locales.includes(stored) ? stored : null;
+        if (!locale) {
+          for (const candidate of navigator.languages || []) {
+            const match = locales.find((l) => base(l) === base(candidate));
+            if (match) {
+              locale = match;
+              break;
+            }
+          }
+        }
+        locale = locale || "en-US";
+        document.documentElement.lang = locale;
+        document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <!-- Marker the service worker looks for before it will cache this document
+         as the offline app shell: it proves the response is the real app rather
+         than a Cloudflare Access login or error page. -->
+    <meta name="flaremo-app-shell" content="flaremo-app-shell" />
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
