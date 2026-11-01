@@ -1,0 +1,112 @@
+name: upstream-sync
+
+# 每天把上游 FlareMo 的最新 release 同步成一个待人工审阅的 PR。
+# 不自动合并（自动合并=方案 B，需要人明确改开关）。
+# 合并该 PR → 推 main → Cloudflare Workers Builds 自动 构建+迁移+部署。
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 01:00 UTC = 09:00 北京时间
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "指定要同步的上游 tag（留空=最新 release）"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM: realchendahuang/FlareMo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: 配置 git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # .gitattributes 给 wrangler.jsonc 声明 merge=ours，这里注册该驱动
+          git config merge.ours.driver true
+
+      - name: 取目标 tag
+        id: tag
+        run: |
+          T="${{ github.event.inputs.tag }}"
+          if [ -z "$T" ]; then
+            T=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          fi
+          echo "value=$T" >> "$GITHUB_OUTPUT"
+          git fetch --tags --quiet "https://github.com/$UPSTREAM.git"
+          if git merge-base --is-ancestor "$T" HEAD 2>/dev/null; then
+            echo "已是最新（$T 已在当前分支）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 合并上游并开 PR
+        if: steps.tag.outputs.skip != 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_OUTPUT }}
+          GHTOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          set -euo pipefail
+          BRANCH="upstream-sync/${TAG}"
+          git checkout -B "$BRANCH" "origin/main"
+          if ! git merge --no-ff -s ort -m "sync: FlareMo ${TAG}" "$TAG"; then
+            git merge --abort
+            echo "::error::合并 ${TAG} 出现非预期冲突，需人工处理（wrangler.jsonc 已由 merge=ours 保护）"
+            exit 1
+          fi
+
+          CHANGED=$(git diff --name-only "origin/main...HEAD" | head -400)
+          MIGRATIONS=$(git diff --name-only "origin/main...HEAD" | grep -E '^(drizzle|migrations)/' | sed 's/^/- 🗄 /' || true)
+          NEWCI=$(git diff --name-only "origin/main...HEAD" | grep -E '^\.github/workflows/' | sed 's/^/- ⚠️ 上游新增 CI：/' || true)
+          COUNT=$(git diff --name-only "origin/main...HEAD" | wc -l | tr -d ' ')
+          NOTES=$(gh api "repos/${UPSTREAM}/releases/tags/${TAG}" --jq .body 2>/dev/null || echo "（取不到 release 说明）")
+
+          {
+            echo "## 上游同步：${TAG}"
+            echo
+            echo "- 变更文件 **${COUNT}** 个"
+            echo "- 合并后 push 到 main 会**自动触发 Workers Builds**：构建 → \`pnpm migrate:remote\` 应用迁移 → 部署 Worker"
+            [ -n "$MIGRATIONS" ] && echo && echo "### 本次涉及的数据库迁移" && echo "$MIGRATIONS"
+            [ -n "$NEWCI" ] && echo && echo "### 注意" && echo "$NEWCI"
+            echo
+            echo "---"
+            echo
+            echo "### 上游 release 说明"
+            echo
+            echo "$NOTES"
+            echo
+            echo "### 合并前建议"
+            echo "1. 看一眼上面有无「无 Cloudflare 资源变化」之外的额外步骤"
+            echo "2. 在 Cloudflare 控制台导出一次 D1 备份（迁移不可回滚）"
+            echo "3. 确认无误再 Merge，让 Workers Builds 上线"
+          } > /tmp/body.md
+
+          git push -q origin "$BRANCH"
+
+          # 关掉同一分支的旧 PR，避免堆积
+          gh pr close "$BRANCH" --comment "被新的 ${TAG} 同步 PR 取代" --delete-branch || true
+
+          URL=$(gh pr create --base main --head "$BRANCH" \
+                 --title "sync: FlareMo ${TAG}" \
+                 --label "upstream-sync" \
+                 --body-file /tmp/body.md)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "已开 PR：$URL"
