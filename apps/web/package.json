@@ -2,7 +2,7 @@
   "name": "@flaremo/web",
   "license": "AGPL-3.0-only",
   "private": true,
-  "version": "0.25.0",
+  "version": "0.28.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -62,7 +62,6 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
     "react-grab": "^0.2.0",
-    "shadcn": "^4.23.0",
     "typescript": "^5.9.3",
     "unified": "^11.0.5",
     "vite": "^8.3.5"

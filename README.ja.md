@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>サーバー不要 · 運用コストゼロ · 24時間グローバル常時稼働 · データの完全な自己所有</b><br>
-  個人では静かで集中できる思考記録スペース＆第2の脳として、チームではメンバー同士がノートを公開し合える、きめ細やかな権限を持つ共有スペースとして。
+  個人では AI ネイティブな第 2 の脳。チームでは共有ナレッジベース。
 </p>
 
 <p align="center">
@@ -20,7 +20,6 @@
   <a href="https://github.com/realchendahuang/FlareMo/stargazers"><img src="https://img.shields.io/github/stars/realchendahuang/FlareMo?style=flat&color=F38020" alt="GitHub stars"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/realchendahuang/FlareMo?style=flat&color=2563EB" alt="License"></a>
   <a href="https://workers.cloudflare.com/"><img src="https://img.shields.io/badge/Runtime-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white" alt="Cloudflare Workers"></a>
-  <a href="https://github.com/usememos/memos"><img src="https://img.shields.io/badge/Ecosystem-Memos%20Compatible-0284C7" alt="Memos Compatible"></a>
   <a href="https://www.better-auth.com/"><img src="https://img.shields.io/badge/Auth-Better%20Auth-10B981" alt="Better Auth"></a>
   <a href="https://flaremo.app"><img src="https://img.shields.io/badge/Website-flaremo.app-EA580C" alt="Website"></a>
 </p>
@@ -49,7 +48,7 @@ FlareMoが立ち向かう問いはもっとシンプルです：**無料のCloud
 
 - **真のサーバーレス**：コードも静的アセットも、ユーザーの近くにあるCloudflare Workersのエッジノード上でミリ秒応答。
 - **最初からエンタープライズ級の耐久性**：ノートとメタデータはCloudflare D1が担当し、メディア添付ファイルはマルチリージョンレプリケーション付きのCloudflare R2に保存。
-- **AIネイティブな第2の脳**：Agent MemoryハブにCLIとクロスエージェントSkillを同梱。AIエージェント（Claude、Cursor、Codex、ChatGPT、ZCode）が長期的な好みや記憶スコープを読み取り・更新できます。MCPエンドポイントも利用可能です。
+- **AIネイティブな第2の脳**：ノートMCPエンドポイントと `flaremo-notes` Skillを同梱。Claude、Cursor、Codex、ChatGPT、ZCodeがあなた自身のノートを検索・読み取り・書き込みできます。独立したAIメモリや、管理すべき2冊目のノートはありません。
 - **一人には静かに、大勢には強力に**：デフォルトは暗号化された一人用のプライベートな空間。チームモードを有効にすると、ロールと3段階の公開範囲を備えたチーム共有スペースが加わります — ノートを共有するための場所であり、プロジェクトを共同で進めるためのものではありません。
 - **シンプル、でも粗削りではない**：インターフェースは静かに保たれ、すべての操作に存在する理由がある — 見せびらかす装飾はなく、役に立つものの欠落もありません。
 
@@ -66,10 +65,10 @@ FlareMoが立ち向かう問いはもっとシンプルです：**無料のCloud
 - **思考を呼び起こす**：内蔵の**デイリーレビュー**（この日の記録）、**ランダムウォーク**（タグやバックリンクのグラフをポストカード風の要約とともに散策）、関連ノートのおすすめ。
 - **改訂履歴**：全バージョンの差分表示とワンクリックでの過去バージョン復元。
 
-### 2. AI長期記憶（CLI + Skills）
-- **Agent Memory**：`flaremo` CLIと`flaremo-memory` Skillを同梱。AIエージェントが共通のREST基盤を通じてセッションを跨いだ長期記憶（好み、プロジェクトの決定事項、制約、教訓）を記録・更新できます。
-- **人間が最終確認**：`/memory` 画面でAIが記録した記憶を確認・検証・ロック・修正できます。
-- **オープンなエコシステム**：推奨パスはCLI + Skills。既存のMCPクライアント向けに `/memory/mcp`（Streamable HTTP MCP）と `/mcp` エンドポイントも提供。
+### 2. AIがあなたのノートを読み書き（MCP + Skill）
+- **ノートMCP**：`/mcp` でノートの一覧・検索・取得・作成・更新・削除を提供。失効可能な `memos_pat_` トークンで認証します。
+- **1つのSkill**：`skills/flaremo-notes` が、書く前に検索する・原文を保つ・変更したノートIDを返す、という規約を各エージェントに教えます。
+- **独立メモリなし**：エージェントは必要なときにノートを読むだけで、バックグラウンドで第2の台帳に抽出することはありません。
 
 ### 3. TODOとプロジェクト
 - **ノートに日付を入れる**：ノートに日付とプロジェクトを設定すると、その中の未完了のTODOがそれぞれタスクになります。ノート上でもTODOページでも、チェックを入れると双方向に同期します。
@@ -97,13 +96,14 @@ FlareMoが立ち向かう問いはもっとシンプルです：**無料のCloud
 - **ライブ音声入力**：入力欄のマイクボタンを押すと、話した内容がリアルタイムに文字起こし（ASR）され下書きに入ります。
 
 ### 7. Secure Better Authによるアプリケーションセキュリティ
-- **Better Auth基盤**：ブラウザは `HttpOnly`・`SameSite=Lax` のクッキーセッション。スクリプト、CLI、MCP向けには失効可能な `memos_pat_` Personal Access Token を提供。
+- **Better Auth基盤**：ブラウザは `HttpOnly`・`SameSite=Lax` のクッキーセッション。スクリプト、MCP向けには失効可能な `memos_pat_` Personal Access Token を提供。
 - **厳格なOrigin保護**：状態を変更するリクエストには厳密なOriginのホワイトリストを強制。Cloudflare Accessも任意の外層防御として併用できます。
 
-### 8. Memos互換とシームレスな移行
-- **Memos `/api/v1` 互換**：Memosの主要APIエンドポイント（デフォルトはcamelCase、ヘッダーでレガシーのsnake_case）とOpenAPIスキーマを提供。
-- **サードパーティアプリ対応**：Moe Memosなどのモバイルクライアントから直接接続できます。
-- **双方向のインポート＆エクスポート**：生データ一式の完全エクスポート、競合戦略付きのワンクリックインポート、Memos 0.31 のエクスポートを変換するスクリプト（[ガイド](./docs/en/import-from-memos.md)）。
+### 8. データはいつもあなたのもの
+- **ワンクリックで完全エクスポート**：ノート、添付ファイル、タスク、プロジェクト、記事、共有関係を 1 つのファイルにまとめ、いつでもオフライン保管できます。
+- **中途半端なデータを残さないインポート**：スキップと複製の 2 つの競合戦略に対応。失敗したインポートは一括でロールバックされ、欠けたデータセットが残りません。
+- **これまでの履歴を移行**：同梱の変換スクリプトが既存のエクスポートを FlareMo のインポート形式に変換し、日時・タグ・ピン留め・公開範囲を保持します（[移行ガイド](./docs/en/import-from-memos.md)）。
+- **プロトコルで開く**：`/api/v1` 互換レイヤーと失効可能な Personal Access Token、さらに AI ツール向けの MCP。対応範囲は[互換性マトリクス](./docs/en/memos-compatibility.md)に記載しています。
 
 ---
 
@@ -196,10 +196,10 @@ pnpm deploy
 ```mermaid
 flowchart LR
   Browser["FlareMo Web UI (React 19 / PWA)"] --> Worker["Cloudflare Worker"]
-  Clients["Memos Clients / Scripts / MCP"] --> Worker
+  Clients["Scripts / MCP"] --> Worker
 
   Worker --> Auth["Better Auth (Session / PAT)"]
-  Worker --> D1["Cloudflare D1 (Memos / Relations / Settings)"]
+  Worker --> D1["Cloudflare D1 (Notes / Relations / Settings)"]
   Access["Cloudflare Access (Optional Outer Perimeter)"] -.-> Worker
   Worker --> R2["Cloudflare R2 (Attachments & Exports)"]
   Worker --> Assets["Workers Static Assets"]

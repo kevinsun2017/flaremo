@@ -1,6 +1,5 @@
 import {
   createMemoCommentSchema,
-  createMemoryFromMemoSchema,
   createMemoSchema,
   listMemosQuerySchema,
   listNotificationsQuerySchema,
@@ -14,11 +13,8 @@ import {
   countMemoComments,
   createMemo,
   createMemoComment,
-  createMemoryFromMemo,
-  createMemoryFromMemoInputToWrite,
   deleteTag,
   getFlaremoUserNames,
-  getMemoById,
   getMemoStats,
   listAttachmentsForMemos,
   listMemoComments,
@@ -27,20 +23,19 @@ import {
   listTagHierarchy,
   listUserNotifications,
   moveMemoToTrash,
-  NotFoundError,
   renameTag,
   type UserNotificationDto,
   updateMemo,
   updateUserNotification,
 } from "@flaremo/domain";
 import { memosToListResponse, memoToDto } from "@flaremo/memos";
-import { zValidator } from "@hono/zod-validator";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { getRequestContext, type HonoBindings } from "../../context";
 import { jsonError } from "../../http";
 import { buildMemoContext } from "../../memo-context";
 import { hardDeleteMemoWithAttachments } from "../../memo-hard-delete";
+import { zValidator } from "../../validated";
 
 function appNotificationToDto(notification: UserNotificationDto) {
   return {
@@ -228,30 +223,6 @@ export function registerMemoCrudRoutes(app: Hono<HonoBindings>) {
       return jsonError(c, error);
     }
   });
-
-  app.post(
-    "/memos/:id/memory",
-    zValidator("json", createMemoryFromMemoSchema),
-    async (c) => {
-      try {
-        const { db, user, userLimits } = await getRequestContext(c);
-        const memoId = `memos/${c.req.param("id")}`;
-        const memo = await getMemoById(db, user, memoId);
-        if (!memo) throw new NotFoundError("Memo not found");
-        const result = await createMemoryFromMemo(
-          db,
-          user,
-          { type: "user" },
-          createMemoryFromMemoInputToWrite(c.req.valid("json"), memo.content),
-          memoId,
-          { userLimits, userId: user.id },
-        );
-        return c.json(result, result.duplicate ? 200 : 201);
-      } catch (error) {
-        return jsonError(c, error);
-      }
-    },
-  );
 
   app.delete("/memos/:id", async (c) => {
     try {
