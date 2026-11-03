@@ -9,6 +9,7 @@ const messages = {
   "nav.agent": "Agent",
   "agent.title": "Agent chat",
   "agent.close": "Close",
+  "agent.retry": "Retry",
   "agent.disclaimer": "Content is AI-generated and for reference only",
   "agent.mention": "@ mention",
   "agent.skills": "Skills",

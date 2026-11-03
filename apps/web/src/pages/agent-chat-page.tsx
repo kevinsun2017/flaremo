@@ -9,6 +9,7 @@ import {
   MessageSquarePlusIcon,
   PlusIcon,
   PuzzleIcon,
+  RefreshCwIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react";
@@ -292,23 +293,36 @@ function Composer({
   const { t } = useI18n();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const send = useMutation({
     mutationFn: (content: string) => sendMessage(activeId!, content),
     onSuccess: (data) => {
       setDraft("");
+      setSendError(null);
       onSources(data.message.id, data.sources);
       qc.invalidateQueries({
         queryKey: queryKeys.agent.messages(activeId!),
       });
       onCreated(activeId!);
     },
-    onError: () => toast.error(t("agent.sendFailed")),
+    onError: () => {
+      setSendError(t("agent.sendFailed"));
+      toast.error(t("agent.sendFailed"));
+    },
   });
 
   const submit = () => {
     const content = draft.trim();
     if (!content || !activeId || send.isPending) return;
+    setSendError(null);
+    send.mutate(content);
+  };
+
+  const retry = () => {
+    const content = draft.trim();
+    if (!content || !activeId || send.isPending) return;
+    setSendError(null);
     send.mutate(content);
   };
 
@@ -369,6 +383,21 @@ function Composer({
           <ImageIcon className="size-4" strokeWidth={1.5} />
         </Button>
         <div className="flex-1" />
+        {/* Failed state: red hint + green retry (flomo style). */}
+        {sendError && (
+          <div className="flex items-center gap-2 px-2 pb-1 text-xs">
+            <span className="text-destructive">{sendError}</span>
+            <Button
+              size="icon-sm"
+              variant="default"
+              className="bg-emerald-500 text-white hover:bg-emerald-600"
+              onClick={retry}
+              aria-label={t("agent.retry")}
+            >
+              <RefreshCwIcon className="size-4" strokeWidth={1.5} />
+            </Button>
+          </div>
+        )}
         {/* In-box circular up-arrow send button.
             flomo: grey when empty, green-filled with white arrow once there's text. */}
         <Button

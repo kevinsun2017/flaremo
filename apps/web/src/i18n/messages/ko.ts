@@ -9,6 +9,7 @@ const messages = {
   "nav.agent": "에이전트",
   "agent.title": "Agent 대화",
   "agent.close": "닫기",
+  "agent.retry": "재시도",
   "agent.disclaimer": "AI가 생성한 내용이며 참고용입니다",
   "agent.mention": "@ 멘션",
   "agent.skills": "스킬",

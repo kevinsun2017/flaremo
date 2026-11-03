@@ -8,6 +8,7 @@ const messages = {
   "nav.agent": "Agent",
   "agent.title": "Discussion IA",
   "agent.close": "Fermer",
+  "agent.retry": "Réessayer",
   "agent.disclaimer": "Contenu généré par l'IA, à titre de référence uniquement",
   "agent.mention": "@ mention",
   "agent.skills": "Compétences",

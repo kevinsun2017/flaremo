@@ -8,6 +8,7 @@ const messages = {
   "nav.agent": "エージェント",
   "agent.title": "Agent チャット",
   "agent.close": "閉じる",
+  "agent.retry": "再試行",
   "agent.disclaimer": "内容は AI が生成したものであり、参考用です",
   "agent.mention": "@ メンション",
   "agent.skills": "スキル",
