@@ -84,6 +84,13 @@ export type FlareMoEnv = Env & {
   FLAREMO_EMBEDDING_DIMENSIONS?: string;
   FLAREMO_EMBEDDING_API_URL?: string;
   FLAREMO_EMBEDDING_API_KEY?: string;
+  // Agent chat LLM bridge (flomo-style conversational agent P1). Generic
+  // OpenAI-compatible endpoint; the local Magpie bridge serves
+  // /v1/chat/completions on 127.0.0.1:3425. API key optional for unauthenticated
+  // local bridges; model id defaults to a Magpie routing group.
+  FLAREMO_LLM_API_URL?: string;
+  FLAREMO_LLM_API_KEY?: string;
+  FLAREMO_LLM_MODEL?: string;
   // Usage-panel limits. Defaults are the Workers Free Vectorize allowance.
   FLAREMO_VECTORIZE_STORED_LIMIT?: string;
   FLAREMO_VECTORIZE_QUERIED_LIMIT?: string;

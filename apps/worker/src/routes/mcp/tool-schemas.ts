@@ -417,4 +417,50 @@ export const streamableTools: Array<{
       additionalProperties: false,
     },
   },
+  {
+    name: "memory_remember",
+    description:
+      "Persist one fact/preference into the user's memory ledger. Stored as a specially-tagged memo (payload.memory); declines duplicates via a content fingerprint.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: {
+          type: "string",
+          minLength: 1,
+          description: "Human-readable fact, e.g. 'Prefer terse replies.'",
+        },
+        type: {
+          type: "string",
+          enum: ["semantic", "episodic", "procedural"],
+        },
+        kind: {
+          type: "string",
+          enum: ["preference", "fact", "decision", "constraint", "lesson"],
+        },
+        source: { type: "string" },
+      },
+      required: ["content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_recall",
+    description:
+      "List every fact currently in the user's memory ledger, newest last.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "memory_compile",
+    description:
+      "Project the memory ledger into a compact list of facts for agent context (imaging); callers summarize the projection.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
 ];
