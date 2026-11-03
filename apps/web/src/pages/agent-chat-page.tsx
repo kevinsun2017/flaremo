@@ -22,6 +22,7 @@ import {
   sendMessage,
   type AgentChatMessage,
 } from "@/api";
+import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -306,9 +307,10 @@ function Composer({
       });
       onCreated(activeId!);
     },
-    onError: () => {
-      setSendError(t("agent.sendFailed"));
-      toast.error(t("agent.sendFailed"));
+    onError: (error: unknown) => {
+      const msg = error instanceof ApiError ? error.message : t("agent.sendFailed");
+      setSendError(msg);
+      toast.error(msg);
     },
   });
 
