@@ -304,10 +304,12 @@ function Composer({
       setSendError(null);
       if (data.message) {
         onSources(data.message.id, data.sources);
-        qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId!) });
-        onCreated(activeId!);
-      } else if (data.llmError) {
-        // AI 回复失败：用户消息已发出，只提示 AI 侧失败并可重试
+      }
+      // 用户消息已发出，无论 LLM 成不成功都刷新列表，避免“消息发不出去”的假象
+      qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId!) });
+      onCreated(activeId!);
+      if (data.llmError) {
+        // AI 回复失败：用户消息已落库，只提示 AI 侧失败并可重试
         setSendError(data.llmError);
         toast.error(data.llmError);
       }
