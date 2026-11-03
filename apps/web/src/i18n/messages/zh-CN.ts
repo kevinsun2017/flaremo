@@ -7,6 +7,7 @@ const messages = {
   "nav.agent": "Agent 对话",
   "agent.title": "Agent 对话",
   "agent.close": "关闭",
+  "agent.disclaimer": "当前内容由 AI 生成，仅供参考",
   "agent.mention": "@ 提及",
   "agent.skills": "技能",
   "agent.attachImage": "上传图片",

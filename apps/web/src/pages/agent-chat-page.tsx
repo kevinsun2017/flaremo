@@ -164,6 +164,9 @@ export function AgentChatDialog() {
                 setSources((prev) => ({ ...prev, [msgId]: ids }))
               }
             />
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              {t("agent.disclaimer")}
+            </p>
           </div>
         </div>
       )}

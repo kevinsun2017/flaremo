@@ -8,6 +8,7 @@ const messages = {
   "nav.agent": "Агент",
   "agent.title": "Чат агента",
   "agent.close": "Закрыть",
+  "agent.disclaimer": "Содержимое создано ИИ и носит справочный характер",
   "agent.mention": "@ упоминание",
   "agent.skills": "Навыки",
   "agent.attachImage": "Картинка",

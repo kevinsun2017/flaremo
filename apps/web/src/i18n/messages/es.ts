@@ -9,6 +9,7 @@ const messages = {
   "nav.agent": "Agente",
   "agent.title": "Chat del agente",
   "agent.close": "Cerrar",
+  "agent.disclaimer": "El contenido lo genera la IA y es solo de referencia",
   "agent.mention": "@ mencionar",
   "agent.skills": "Habilidades",
   "agent.attachImage": "Imagen",
