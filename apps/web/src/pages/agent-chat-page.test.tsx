@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -15,7 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
   }: {
     to: string;
     params?: Record<string, string>;
-    children?: unknown;
+    children?: ReactNode;
     className?: string;
   }) => {
     const href = params ? `/${params.memoId ?? ""}` : to;
@@ -28,7 +29,8 @@ vi.mock("@tanstack/react-router", () => ({
   },
 }));
 
-import { MessageBubble, type AgentChatMessage } from "./agent-chat-page";
+import type { AgentChatMessage } from "@/api";
+import { MessageBubble } from "./agent-chat-page";
 
 function makeMessage(over: Partial<AgentChatMessage>): AgentChatMessage {
   return {
