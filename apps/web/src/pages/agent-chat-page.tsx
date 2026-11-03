@@ -324,7 +324,7 @@ function Composer({
   const canSend = !!draft.trim() && !send.isPending;
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card/40">
+    <div className="rounded-xl border border-border/60 bg-card/40 transition-shadow focus-within:border-emerald-500/70 focus-within:ring-2 focus-within:ring-emerald-500/40">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -348,7 +348,7 @@ function Composer({
           aria-label={t("agent.mention")}
           title={t("agent.mention")}
         >
-          <AtSignIcon className="size-4" />
+          <AtSignIcon className="size-4" strokeWidth={1.5} />
         </Button>
         <Button
           size="icon-sm"
@@ -357,7 +357,7 @@ function Composer({
           aria-label={t("agent.skills")}
           title={t("agent.skills")}
         >
-          <PuzzleIcon className="size-4" />
+          <PuzzleIcon className="size-4" strokeWidth={1.5} />
         </Button>
         <Button
           size="icon-sm"
@@ -366,19 +366,25 @@ function Composer({
           aria-label={t("agent.attachImage")}
           title={t("agent.attachImage")}
         >
-          <ImageIcon className="size-4" />
+          <ImageIcon className="size-4" strokeWidth={1.5} />
         </Button>
         <div className="flex-1" />
-        {/* In-box circular up-arrow send button. */}
+        {/* In-box circular up-arrow send button.
+            flomo: grey when empty, green-filled with white arrow once there's text. */}
         <Button
           size="icon"
           variant={canSend ? "default" : "secondary"}
-          className="size-8 rounded-full"
+          className={cn(
+            "size-8 rounded-full",
+            canSend
+              ? "bg-emerald-500 text-white hover:bg-emerald-600"
+              : "bg-muted text-muted-foreground hover:bg-muted",
+          )}
           disabled={!canSend}
           onClick={submit}
           aria-label={t("agent.send")}
         >
-          <ArrowUpIcon className="size-4" />
+          <ArrowUpIcon className="size-4" strokeWidth={2.5} />
         </Button>
       </div>
     </div>

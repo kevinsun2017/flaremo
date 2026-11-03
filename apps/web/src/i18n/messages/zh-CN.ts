@@ -18,7 +18,7 @@ const messages = {
   "agent.startConversation": "开始一段对话",
   "agent.startHint": "问它「我是谁」「我最近反复在想什么」……",
   "agent.pickConversation": "正在准备对话…",
-  "agent.placeholder": "问点什么，比如「我最近反复出现但没察觉的是什么」…",
+  "agent.placeholder": "想聊点什么？",
   "agent.send": "发送",
   "agent.sources": "出处",
   "agent.createFailed": "创建对话失败",
