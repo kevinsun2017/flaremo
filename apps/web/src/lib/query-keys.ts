@@ -75,4 +75,11 @@ export const queryKeys = {
     forUser: (userId: string | undefined) =>
       ["capture-status", userId ?? ""] as const,
   },
+  /** Agent chat: the conversation list plus each conversation's messages. */
+  agent: {
+    all: ["agent"] as const,
+    conversations: ["agent", "conversations"] as const,
+    messages: (conversationId: string) =>
+      ["agent", "conversations", conversationId, "messages"] as const,
+  },
 } as const;

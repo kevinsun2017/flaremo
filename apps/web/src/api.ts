@@ -3,6 +3,7 @@
 // internal to ./api/client and is intentionally not re-exported.
 
 export * from "./api/account";
+export * from "./api/agent";
 export * from "./api/articles";
 export * from "./api/attachments";
 export * from "./api/auth";

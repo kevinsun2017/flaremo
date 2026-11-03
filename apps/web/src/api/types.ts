@@ -187,3 +187,22 @@ export type AdminUser = {
   status: "active" | "removed";
   created_at: string;
 };
+
+// Agent chat (flomo-style). DTOs mirror the D1 schema in
+// packages/db/src/schema/agent.ts; not yet surfaced through @flaremo/contracts.
+export type AgentConversation = {
+  id: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentChatMessage = {
+  id: string;
+  conversationId: string;
+  userId: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};

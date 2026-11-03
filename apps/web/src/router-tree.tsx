@@ -11,6 +11,7 @@ import {
   getRelatedMemos,
   getTodayReview,
   listArticles,
+  listConversations,
   listProjects,
 } from "@/api";
 import { Toaster } from "@/components/ui/sonner";
@@ -112,6 +113,11 @@ const ArticlesPage = lazy(() =>
 const ArticleEditorPage = lazy(() =>
   import("@/pages/article-editor-page").then((module) => ({
     default: module.ArticleEditorPage,
+  })),
+);
+const AgentChatPage = lazy(() =>
+  import("@/pages/agent-chat-page").then((module) => ({
+    default: module.AgentChatPage,
   })),
 );
 
@@ -401,6 +407,24 @@ const articlesRoute = createRoute({
   },
 });
 
+function AgentChatRoutePage() {
+  return <AgentChatPage />;
+}
+
+const agentChatRoute = createRoute({
+  getParentRoute: () => workspaceRoute,
+  path: "/agent",
+  component: AgentChatRoutePage,
+  loader: ({ context }) => {
+    warmQuery(
+      context.queryClient.ensureQueryData({
+        queryKey: queryKeys.agent.conversations,
+        queryFn: () => listConversations(),
+      }),
+    );
+  },
+});
+
 function ArticleEditorRoutePage() {
   const { articleId } = articleEditRoute.useParams();
   return (
@@ -433,6 +457,7 @@ const router = createRouter({
       randomWalkRoute,
       projectsRoute,
       articlesRoute,
+      agentChatRoute,
     ]),
     shareRoute,
     loginRoute,
