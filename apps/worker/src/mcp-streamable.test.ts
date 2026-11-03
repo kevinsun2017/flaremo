@@ -93,6 +93,9 @@ describe("stateless Streamable HTTP MCP", () => {
       "attachment_get_attachment",
       "attachment_delete_attachment",
       "auth_get_current_user",
+      "memory_remember",
+      "memory_recall",
+      "memory_compile",
     ]);
     expect(body.result.tools.every((tool) => tool.inputSchema)).toBe(true);
   });

@@ -48,6 +48,11 @@ import {
   streamableUpdateMemo,
 } from "./tools/memos";
 import {
+  streamableMemoryCompile,
+  streamableMemoryRecall,
+  streamableMemoryRemember,
+} from "./tools/memory-ledger";
+import {
   streamableCreateShortcut,
   streamableDeleteShortcut,
   streamableGetShortcut,
@@ -208,6 +213,12 @@ async function callStreamableTool(
       return streamableDeleteAttachment(context, env, args);
     case "auth_get_current_user":
       return { user: currentUserToMemosDto(context) };
+    case "memory_remember":
+      return streamableMemoryRemember(context, args);
+    case "memory_recall":
+      return streamableMemoryRecall(context, args);
+    case "memory_compile":
+      return streamableMemoryCompile(context, args);
     default:
       throw new ValidationError(`Unknown tool: ${name}`);
   }

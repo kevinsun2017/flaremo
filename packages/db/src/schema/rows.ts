@@ -1,4 +1,5 @@
 import type { authApiKeys, authBootstrap, authUsers, users } from "./auth";
+import type { agentChatMessages, agentConversations } from "./agent";
 import type { articles, attachments, shares } from "./content";
 import type {
   memoRevisions,
@@ -34,6 +35,9 @@ export type MemoPayload = {
 };
 
 export type UserRow = typeof users.$inferSelect;
+export type AgentConversationRow = typeof agentConversations.$inferSelect;
+export type AgentChatMessageRow = typeof agentChatMessages.$inferSelect;
+export type NewAgentChatMessageRow = typeof agentChatMessages.$inferInsert;
 export type AuthUserRow = typeof authUsers.$inferSelect;
 export type AuthApiKeyRow = typeof authApiKeys.$inferSelect;
 export type AuthBootstrapRow = typeof authBootstrap.$inferSelect;

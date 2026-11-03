@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { HonoBindings } from "../../context";
 import { registerMeRoutes } from "./me";
+import { registerAgentRoutes } from "./agent";
 import { registerMemoCrudRoutes, registerMemoListRoutes } from "./memos";
 import { registerPushRoutes } from "./push";
 import { registerReviewRoutes } from "./review";
@@ -13,6 +14,7 @@ export const appApi = new Hono<HonoBindings>();
 // order), so the calls below follow the historical single-file order exactly:
 // me/health, memo list+stats, timeline, push, usage, review, memo CRUD+tags.
 registerMeRoutes(appApi);
+registerAgentRoutes(appApi);
 registerMemoListRoutes(appApi);
 registerTimelineRoutes(appApi);
 registerPushRoutes(appApi);
