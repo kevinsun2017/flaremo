@@ -297,15 +297,20 @@ function Composer({
   const [sendError, setSendError] = useState<string | null>(null);
 
   const send = useMutation({
-    mutationFn: (content: string) => sendMessage(activeId!, content),
+    mutationFn: ({ content, retry }: { content: string; retry?: boolean }) =>
+      sendMessage(activeId!, content, { retry }),
     onSuccess: (data) => {
       setDraft("");
       setSendError(null);
-      onSources(data.message.id, data.sources);
-      qc.invalidateQueries({
-        queryKey: queryKeys.agent.messages(activeId!),
-      });
-      onCreated(activeId!);
+      if (data.message) {
+        onSources(data.message.id, data.sources);
+        qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId!) });
+        onCreated(activeId!);
+      } else if (data.llmError) {
+        // AI 回复失败：用户消息已发出，只提示 AI 侧失败并可重试
+        setSendError(data.llmError);
+        toast.error(data.llmError);
+      }
     },
     onError: (error: unknown) => {
       const msg = error instanceof ApiError ? error.message : t("agent.sendFailed");
@@ -318,14 +323,14 @@ function Composer({
     const content = draft.trim();
     if (!content || !activeId || send.isPending) return;
     setSendError(null);
-    send.mutate(content);
+    send.mutate({ content, retry: false });
   };
 
   const retry = () => {
     const content = draft.trim();
     if (!content || !activeId || send.isPending) return;
     setSendError(null);
-    send.mutate(content);
+    send.mutate({ content, retry: true });
   };
 
   if (!activeId) {

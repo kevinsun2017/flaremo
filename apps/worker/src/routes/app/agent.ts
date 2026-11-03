@@ -15,6 +15,7 @@ const createConversationSchema = z.object({
 
 const chatMessageSchema = z.object({
   content: z.string().trim().min(1).max(8_000),
+  retry: z.boolean().optional(),
 });
 
 export function registerAgentRoutes(app: Hono<HonoBindings>) {
@@ -85,9 +86,10 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
     zValidator("json", chatMessageSchema),
     async (c) => {
       try {
-        const { db, user } = await getRequestContext(c);
-        const convId = c.req.param("id");
-        const { content } = c.req.valid("json");
+      const { db, user } = await getRequestContext(c);
+      const convId = c.req.param("id");
+
+        const { content, retry } = c.req.valid("json");
 
         // Confirm the conversation belongs to the caller (owner check).
         const conv = await db
@@ -104,16 +106,19 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
           return c.json({ error: { message: "conversation not found" } }, 404);
         }
 
-        const now = new Date().toISOString();
-        const userMsgId = crypto.randomUUID();
-        await db.insert(agentChatMessages).values({
-          id: userMsgId,
-          conversationId: convId,
-          userId: user.id,
-          role: "user",
-          content,
-          createdAt: now,
-        });
+        // Append the user message (skipped on LLM retry to avoid duplicates).
+        if (!retry) {
+          const now = new Date().toISOString();
+          const userMsgId = crypto.randomUUID();
+          await db.insert(agentChatMessages).values({
+            id: userMsgId,
+            conversationId: convId,
+            userId: user.id,
+            role: "user",
+            content,
+            createdAt: now,
+          });
+        }
 
         // Build the message history for the LLM (system + prior turns + this one).
         const history = await db
@@ -133,59 +138,74 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
 
         // P2 RAG: semantically retrieve relevant memos and attach them as
         // grounding context. Degrades gracefully when embedding/Vectorize is
-        // unavailable (e.g. local smoke with FLAREMO_EMBEDDING_PROVIDER=none):
-        // the conversation still works, it just answers without source notes.
+        // unavailable.
         let sources: string[] = [];
         let ragContext = "";
         const provider = createEmbeddingProvider(c.env);
         const index = createVectorIndex(c.env);
         if (provider && index) {
-          const hits = await semanticSearchMemos(
-            db,
-            user,
-            {
-              provider,
-              index,
-              namespaces: memoSearchNamespaces(c.env, user, undefined),
-            },
-            content,
-            5,
-          );
-          if (hits.length > 0) {
-            const memos = await getSemanticSearchMemos(
+          try {
+            const hits = await semanticSearchMemos(
               db,
               user,
-              hits.map((hit) => hit.id),
+              {
+                provider,
+                index,
+                namespaces: memoSearchNamespaces(c.env, user, undefined),
+              },
+              content,
+              5,
             );
-            sources = memos.map((memo) => memo.id);
-            ragContext =
-              "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
-              memos
-                .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
-                .join("\n\n");
+            if (hits.length > 0) {
+              const memos = await getSemanticSearchMemos(
+                db,
+                user,
+                hits.map((hit) => hit.id),
+              );
+              sources = memos.map((memo) => memo.id);
+              ragContext =
+                "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
+                memos
+                  .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
+                  .join("\n\n");
+            }
+          } catch (ragErr) {
+            // RAG 失败不阻塞对话：只不带来源继续
+            console.error("RAG failed:", ragErr);
           }
         }
 
         const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${ragContext}`;
-        const reply = await chatWithMagpie(c.env, [
-          { role: "system", content: systemPrompt },
-          ...llmMessages,
-        ]);
-
-        const assistantMsgId = crypto.randomUUID();
-        await db.insert(agentChatMessages).values({
-          id: assistantMsgId,
-          conversationId: convId,
-          userId: user.id,
-          role: "assistant",
-          content: reply,
-          createdAt: new Date().toISOString(),
-        });
+        let assistantMsgId: string | null = null;
+        let reply: string | null = null;
+        let llmError: string | null = null;
+        try {
+          reply = await chatWithMagpie(c.env, [
+            { role: "system", content: systemPrompt },
+            ...llmMessages,
+          ]);
+          assistantMsgId = crypto.randomUUID();
+          await db.insert(agentChatMessages).values({
+            id: assistantMsgId,
+            conversationId: convId,
+            userId: user.id,
+            role: "assistant",
+            content: reply,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (llmErr) {
+          // LLM 失败不阻塞用户消息发送：用户消息已落库，AI 回复失败单独提示
+          llmError = llmErr instanceof Error ? llmErr.message : String(llmErr);
+          console.error("LLM failed:", llmErr);
+        }
 
         return c.json(
           {
-            message: { id: assistantMsgId, role: "assistant", content: reply, createdAt: new Date().toISOString() },
+            message: assistantMsgId
+              ? { id: assistantMsgId, role: "assistant", content: reply!, createdAt: new Date().toISOString() }
+              : null,
             sources,
+            llmError,
           },
           201,
         );

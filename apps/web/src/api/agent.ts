@@ -22,13 +22,9 @@ export async function listMessages(conversationId: string) {
   );
 }
 
-/**
- * Append a user message and run the LLM. Returns the assistant reply plus the
- * memo ids retrieved as grounding sources for this turn (may be empty).
- */
-export async function sendMessage(conversationId: string, content: string) {
-  return apiRequest<{ message: AgentChatMessage; sources: string[] }>(
+export async function sendMessage(conversationId: string, content: string, options: { retry?: boolean } = {}) {
+  return apiRequest<{ message: AgentChatMessage | null; sources: string[]; llmError?: string }>(
     `/api/app/agent/conversations/${encodeURIComponent(conversationId)}/messages`,
-    { method: "POST", body: JSON.stringify({ content }) },
+    { method: "POST", body: JSON.stringify({ content, ...options }) },
   );
 }
