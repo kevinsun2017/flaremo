@@ -7,6 +7,8 @@ import type { TranslationKey } from "../key";
 const messages = {
   "nav.articles": "아티클",
   "nav.agent": "에이전트",
+  "agent.title": "Agent 대화",
+  "agent.close": "닫기",
   "agent.newConversation": "새 대화",
   "agent.emptyConversations": "아직 대화가 없습니다",
   "agent.greeting": "안녕하세요, 당신이 쓴 모든 것을 읽는 AI입니다",

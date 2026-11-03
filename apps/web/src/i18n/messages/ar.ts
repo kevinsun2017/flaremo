@@ -6,6 +6,8 @@ import type { TranslationKey } from "../key";
 const messages = {
   "nav.articles": "مقالات",
   "nav.agent": "المساعد",
+  "agent.title": "محادثة الذكاء الاصطناعي",
+  "agent.close": "إغلاق",
   "agent.newConversation": "محادثة جديدة",
   "agent.emptyConversations": "لا توجد محادثات بعد",
   "agent.greeting": "مرحبًا، أنا الذكاء الاصطناعي الذي يقرأ كل ما كتبته",

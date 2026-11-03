@@ -6,6 +6,8 @@ import type { TranslationKey } from "../key";
 const messages = {
   "nav.articles": "記事",
   "nav.agent": "エージェント",
+  "agent.title": "Agent チャット",
+  "agent.close": "閉じる",
   "agent.newConversation": "新しい会話",
   "agent.emptyConversations": "会話はまだありません",
   "agent.greeting": "こんにちは、あなたの記録を全部読んでいる AI です",

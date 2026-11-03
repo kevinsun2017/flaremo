@@ -7,8 +7,9 @@ import {
   MessageSquarePlusIcon,
   PlusIcon,
   SparklesIcon,
+  XIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   createConversation,
@@ -16,32 +17,33 @@ import {
   listMessages,
   sendMessage,
   type AgentChatMessage,
-  type AgentConversation,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
-import { WorkspacePageHeader } from "@/components/workspace/workspace-page-header";
 import { useI18n } from "@/i18n";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 /**
- * flomo-style Agent chat: a read-everything persona that answers from your
- * own memos. Left rail = conversations; main column = message bubbles + a
- * grounded composer. Every assistant reply surfaces the memo ids the LLM was
- * grounded on (sources), linking straight back to the sourced records.
+ * flomo-style Agent chat, rendered as a floating bubble in the bottom-right
+ * corner (workspace only). Clicking the bubble opens a compact popover with a
+ * single conversational thread; the bubble stays overlaid on every page.
+ *
+ * A conversation is created lazily on first open (or on "new conversation"),
+ * so there is no rail to manage — just one grounded chat like flomo's panel.
  */
-export function AgentChatPage() {
+export function AgentChatDialog() {
   const { t } = useI18n();
   const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   // assistant message id -> memo ids it was grounded on (from the POST reply).
   // Not persisted server-side yet: source persistence needs a worker migration
   // (sources live on the POST response, not in agent_chat_messages).
   const [sources, setSources] = useState<Record<string, string[]>>({});
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const conversations = useQuery({
     queryKey: queryKeys.agent.conversations,
@@ -54,6 +56,7 @@ export function AgentChatPage() {
     enabled: !!activeId,
   });
 
+  // Autocreate the first conversation when the panel opens and none is active.
   const create = useMutation({
     mutationFn: createConversation,
     onSuccess: (data) => {
@@ -63,96 +66,105 @@ export function AgentChatPage() {
     onError: () => toast.error(t("agent.createFailed")),
   });
 
-  return (
-    <WorkspaceLayout
-      header={({ ...props }) => (
-        <WorkspacePageHeader
-          icon={<BotIcon />}
-          title={t("nav.agent")}
-          actions={
-            <Button
-              size="sm"
-              variant="default"
-              disabled={create.isPending}
-              onClick={() => create.mutate()}
-            >
-              <PlusIcon />
-              {t("agent.newConversation")}
-            </Button>
-          }
-          {...props}
-        />
-      )}
-    >
-      <div className="flex h-full min-h-0 gap-4">
-        {/* Conversation rail */}
-        <aside className="hidden w-56 shrink-0 flex-col border-r border-border/50 md:flex">
-          <ConversationList
-            conversations={conversations.data?.conversations}
-            activeId={activeId}
-            onSelect={setActiveId}
-          />
-        </aside>
+  useEffect(() => {
+    if (
+      open &&
+      !activeId &&
+      !create.isPending &&
+      !create.isSuccess &&
+      conversations.isSuccess
+    ) {
+      create.mutate();
+    }
+  }, [open, activeId, create, conversations.isSuccess]);
 
-        {/* Chat column */}
-        <section className="flex min-w-0 flex-1 flex-col gap-4">
+  // Close when clicking outside the panel (bubble is a sibling, not inside).
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      const bubble = document.querySelector<HTMLElement>("[data-agent-bubble]");
+      if (panelRef.current && !panelRef.current.contains(target) && !bubble?.contains(target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  const startNew = () => {
+    setSources({});
+    create.mutate();
+  };
+
+  return (
+    <>
+      {/* Floating action button (bottom-right, above everything). */}
+      <button
+        data-agent-bubble
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={t("agent.title")}
+        className="fixed bottom-6 right-6 z-50 flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        <BotIcon className="size-6" />
+      </button>
+
+      {open && (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label={t("agent.title")}
+          className="fixed bottom-20 right-6 z-50 flex h-[560px] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-background shadow-2xl"
+        >
+          {/* Header */}
+          <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
+            <BotIcon className="size-5 text-primary" />
+            <span className="flex-1 truncate text-sm font-semibold">
+              {t("agent.title")}
+            </span>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              disabled={create.isPending}
+              onClick={startNew}
+              aria-label={t("agent.newConversation")}
+            >
+              <MessageSquarePlusIcon />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setOpen(false)}
+              aria-label={t("agent.close")}
+            >
+              <XIcon />
+            </Button>
+          </div>
+
+          {/* Chat body */}
           <ChatScroll
             activeId={activeId}
             messages={messages.data?.messages}
             loading={messages.isLoading}
             sources={sources}
           />
-          <Composer
-            activeId={activeId}
-            onCreated={(id) =>
-              qc.invalidateQueries({ queryKey: queryKeys.agent.messages(id) })
-            }
-            onSources={(msgId, ids) =>
-              setSources((prev) => ({ ...prev, [msgId]: ids }))
-            }
-          />
-        </section>
-      </div>
-    </WorkspaceLayout>
-  );
-}
 
-function ConversationList({
-  conversations,
-  activeId,
-  onSelect,
-}: {
-  conversations?: AgentConversation[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  const { t } = useI18n();
-  if (!conversations || conversations.length === 0) {
-    return (
-      <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-        {t("agent.emptyConversations")}
-      </p>
-    );
-  }
-  return (
-    <ul className="flex flex-col gap-0.5">
-      {conversations.map((c) => (
-        <li key={c.id}>
-          <button
-            className={cn(
-              "w-full truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
-              c.id === activeId
-                ? "bg-muted font-medium text-foreground"
-                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-            )}
-            onClick={() => onSelect(c.id)}
-            title={c.title}
-          >
-            {c.title}
-          </button>
-        </li>
-      ))}
-    </ul>
+          {/* Composer */}
+          <div className="border-t border-border/60 p-3">
+            <Composer
+              activeId={activeId}
+              onCreated={(id) =>
+                qc.invalidateQueries({ queryKey: queryKeys.agent.messages(id) })
+              }
+              onSources={(msgId, ids) =>
+                setSources((prev) => ({ ...prev, [msgId]: ids }))
+              }
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -170,6 +182,10 @@ function ChatScroll({
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "nearest" });
+  }, [messages, activeId]);
+
   if (!activeId) {
     return (
       <Empty className="flex-1">
@@ -183,9 +199,9 @@ function ChatScroll({
   }
   if (loading) {
     return (
-      <div className="flex flex-1 flex-col gap-3">
-        <Skeleton className="h-16 w-3/4" />
-        <Skeleton className="h-24 w-3/4" />
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <Skeleton className="h-12 w-3/4" />
+        <Skeleton className="h-20 w-3/4" />
       </div>
     );
   }
@@ -197,9 +213,8 @@ function ChatScroll({
       </Empty>
     );
   }
-  endRef.current?.scrollIntoView({ block: "nearest" });
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1">
+    <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
       {messages.map((m) => (
         <MessageBubble key={m.id} message={m} sources={sources[m.id]} />
       ))}
@@ -290,8 +305,8 @@ function Composer({
 
   if (!activeId) {
     return (
-      <div className="rounded-xl border border-dashed border-border/60 p-4 text-center text-sm text-muted-foreground">
-        <MessageSquarePlusIcon className="mx-auto mb-1 size-4" />
+      <div className="rounded-xl border border-dashed border-border/60 p-3 text-center text-sm text-muted-foreground">
+        <PlusIcon className="mx-auto mb-1 size-4" />
         {t("agent.pickConversation")}
       </div>
     );

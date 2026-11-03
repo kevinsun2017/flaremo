@@ -1,5 +1,6 @@
 import { createRoute, Outlet } from "@tanstack/react-router";
 import { Suspense } from "react";
+import { AgentChatDialog } from "@/pages/agent-chat-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 import { AuthenticatedRoute } from "@/routes/authenticated-route";
@@ -42,6 +43,8 @@ function WorkspaceRouteComponent() {
           <Outlet />
         </Suspense>
       </WorkspaceShell>
+      {/* flomo-style floating agent bubble, present on every workspace page. */}
+      <AgentChatDialog />
     </AuthenticatedRoute>
   );
 }

@@ -7,6 +7,8 @@ import type { TranslationKey } from "../key";
 const messages = {
   "nav.articles": "Articles",
   "nav.agent": "Agent",
+  "agent.title": "Agent chat",
+  "agent.close": "Close",
   "agent.newConversation": "New chat",
   "agent.emptyConversations": "No conversations yet",
   "agent.greeting": "Hi, I'm the AI that reads everything you've written",
