@@ -102,16 +102,19 @@ export function AgentChatDialog() {
 
   return (
     <>
-      {/* Floating action button (bottom-right, above everything). */}
-      <button
-        data-agent-bubble
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={t("agent.title")}
-        className="fixed bottom-6 right-6 z-50 flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-ring"
-      >
-        <BotIcon className="size-6" />
-      </button>
+      {/* Floating action button (bottom-right, above everything).
+          flomo behavior: the bubble disappears while the panel is open. */}
+      {!open && (
+        <button
+          data-agent-bubble
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={t("agent.title")}
+          className="fixed bottom-6 right-6 z-50 flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <BotIcon className="size-6" />
+        </button>
+      )}
 
       {open && (
         <div
