@@ -40,7 +40,7 @@ export const EN_SHOWCASE: ShowcaseContent = {
     },
   ],
   ui: {
-    statsRecords: "Memos",
+    statsRecords: "Notes",
     statsTags: "Tags",
     statsDays: "Days",
     trend: "Trend",
@@ -50,7 +50,6 @@ export const EN_SHOWCASE: ShowcaseContent = {
     trash: "Trash",
     dailyReview: "Daily Review",
     randomWalk: "Random Walk",
-    memory: "Memory",
     calendarView: "Schedule",
     projects: "To-dos",
     tagIndex: "Tags",

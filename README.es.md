@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Cero Servidores · Cero Costes de Mantenimiento · Disponibilidad Global 24/7 en el Edge · Control Absoluto de tus Datos</b><br>
-  Para personas: un espacio íntimo de captura de ideas y segundo cerebro con IA. Para equipos: un espacio compartido para publicarse notas entre sí, con roles detallados.
+  Un segundo cerebro nativo de IA para ti. Una base de conocimiento compartida para tu equipo.
 </p>
 
 <p align="center">
@@ -20,7 +20,6 @@
   <a href="https://github.com/realchendahuang/FlareMo/stargazers"><img src="https://img.shields.io/github/stars/realchendahuang/FlareMo?style=flat&color=F38020" alt="GitHub stars"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/realchendahuang/FlareMo?style=flat&color=2563EB" alt="License"></a>
   <a href="https://workers.cloudflare.com/"><img src="https://img.shields.io/badge/Runtime-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white" alt="Cloudflare Workers"></a>
-  <a href="https://github.com/usememos/memos"><img src="https://img.shields.io/badge/Ecosystem-Memos%20Compatible-0284C7" alt="Memos Compatible"></a>
   <a href="https://www.better-auth.com/"><img src="https://img.shields.io/badge/Auth-Better%20Auth-10B981" alt="Better Auth"></a>
   <a href="https://flaremo.app"><img src="https://img.shields.io/badge/Website-flaremo.app-EA580C" alt="Website"></a>
 </p>
@@ -49,7 +48,7 @@ FlareMo responde a una pregunta más simple: **¿Es posible tener una base de co
 
 - **Auténtico serverless**: El código y los archivos estáticos se ejecutan en los nodos perimetrales (edge) de Cloudflare Workers más cercanos a ti, con latencia de milisegundos.
 - **Durabilidad de nivel empresarial desde el primer minuto**: Cloudflare D1 almacena notas y metadatos; Cloudflare R2 guarda los archivos adjuntos con replicación multirregional.
-- **Segundo cerebro nativo de IA**: El centro «Agent Memory» incluye un CLI y un skill multiagente para que los agentes de IA (Claude, Cursor, Codex, ChatGPT, ZCode) lean y actualicen tus preferencias y ámbitos de memoria a largo plazo; también hay endpoints MCP disponibles.
+- **Segundo cerebro nativo de IA**: un endpoint MCP de notas y el skill `flaremo-notes` permiten a Claude, Cursor, Codex, ChatGPT y ZCode buscar, leer y escribir tus propias notas. Sin almacén de memoria de IA ni un segundo cuaderno que mantener.
 - **Silencioso para uno, potente para muchos**: Por defecto es un santuario privado y cifrado de usuario único. Activa el modo de equipo para añadir un espacio de equipo compartido con roles y tres niveles de visibilidad — pensado para compartir notas, no para gestionar proyectos en conjunto.
 - **Mínimo, no simplificado**: La interfaz serena y cada control se gana su lugar — nada de decoración estridente, ninguna función útil ausente.
 
@@ -66,10 +65,10 @@ FlareMo responde a una pregunta más simple: **¿Es posible tener una base de co
 - **Reactivación de ideas**: **Revisión diaria** (un día como hoy), **Paseo aleatorio** (deambular por los grafos de etiquetas y enlaces con resúmenes tipo postal) y sugerencias de notas relacionadas.
 - **Historial de versiones**: Comparación completa de versiones y restauración histórica con un solo clic.
 
-### 2. Memoria de IA a largo plazo (CLI + Skills)
-- **Agent Memory**: Incluye el CLI `flaremo` y el skill `flaremo-memory` — los agentes de IA registran y actualizan memoria a largo plazo entre sesiones (preferencias, decisiones de proyecto, restricciones, lecciones) sobre una base REST común.
-- **Humano en el bucle**: En `/memory` puedes revisar, verificar, fijar o corregir las memorias registradas por la IA.
-- **Ecosistema abierto**: La vía recomendada es CLI + Skills; los endpoints `/memory/mcp` (MCP por HTTP en streaming) y `/mcp` siguen disponibles para clientes MCP existentes.
+### 2. La IA trabaja sobre tus notas (MCP + Skill)
+- **MCP de notas**: `/mcp` expone listar, buscar, leer, crear, actualizar y eliminar tus notas, con autenticación mediante un token revocable `memos_pat_`.
+- **Un skill**: `skills/flaremo-notes` enseña a cada agente a buscar antes de escribir, respetar tu redacción y devolver el ID de la nota que tocó.
+- **Sin memoria aparte**: los agentes leen tus notas cuando hace falta; nada se extrae en segundo plano a un segundo registro.
 
 ### 3. Pendientes y proyectos
 - **Programa una nota**: Elige un día y un proyecto para una nota; cada pendiente sin marcar se convierte en una tarea. Marcarlo en la nota o en la página de pendientes se sincroniza en ambos sentidos.
@@ -97,13 +96,14 @@ FlareMo responde a una pregunta más simple: **¿Es posible tener una base de co
 - **Dictado por voz en vivo**: El botón de micrófono del editor transcribe la voz en tiempo real (ASR) directamente en el borrador.
 
 ### 7. Seguridad robusta con Better Auth
-- **Impulsado por Better Auth**: Sesiones por cookie de navegador `HttpOnly` y `SameSite=Lax`; tokens de acceso personal `memos_pat_` revocables para scripts, CLI y MCP.
+- **Impulsado por Better Auth**: Sesiones por cookie de navegador `HttpOnly` y `SameSite=Lax`; tokens de acceso personal `memos_pat_` revocables para scripts y MCP.
 - **Protección estricta de Origin**: Las peticiones con cambio de estado exigen una lista blanca de origen exacta. Cloudflare Access sigue disponible como perímetro defensivo exterior opcional.
 
-### 8. Compatibilidad con Memos y migración sin costuras
-- **Compatibilidad con la API `/api/v1` de Memos**: Proporciona los endpoints principales de la API de Memos (camelCase por defecto, snake_case heredado vía cabecera) y el esquema OpenAPI.
-- **Listo para apps de terceros**: Funciona directamente con clientes móviles como Moe Memos.
-- **Importación y exportación bidireccionales**: paquetes de exportación completos, importación en un clic con estrategias de conflicto y un conversor para exportaciones de Memos 0.31 ([guía](./docs/en/import-from-memos.md)).
+### 8. Tus datos, siempre tuyos
+- **Exportación completa en un clic**: notas, adjuntos, tareas, proyectos, artículos y relaciones de compartición en un solo archivo que puedes archivar sin conexión cuando quieras.
+- **Importaciones sin datos a medias**: estrategias de conflicto «omitir» o «duplicar»; una importación fallida se revierte por completo y no deja un conjunto incompleto.
+- **Trae tu historial**: un conversor incluido transforma una exportación existente en un paquete de importación de FlareMo, conservando fechas, etiquetas, fijados y visibilidad ([guía de migración](./docs/en/import-from-memos.md)).
+- **Abierto por protocolo**: una capa de compatibilidad `/api/v1` con tokens personales revocables, más MCP para herramientas de IA; el alcance exacto está en la [matriz de compatibilidad](./docs/en/memos-compatibility.md).
 
 ---
 
@@ -196,10 +196,10 @@ Guías detalladas: [Guía de despliegue](./docs/en/deploy.md) · [Despliegue con
 ```mermaid
 flowchart LR
   Browser["FlareMo Web UI (React 19 / PWA)"] --> Worker["Cloudflare Worker"]
-  Clients["Memos Clients / Scripts / MCP"] --> Worker
+  Clients["Scripts / MCP"] --> Worker
 
   Worker --> Auth["Better Auth (Session / PAT)"]
-  Worker --> D1["Cloudflare D1 (Memos / Relations / Settings)"]
+  Worker --> D1["Cloudflare D1 (Notes / Relations / Settings)"]
   Access["Cloudflare Access (Optional Outer Perimeter)"] -.-> Worker
   Worker --> R2["Cloudflare R2 (Attachments & Exports)"]
   Worker --> Assets["Workers Static Assets"]

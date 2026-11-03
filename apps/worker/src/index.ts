@@ -12,6 +12,7 @@ import {
 } from "@flaremo/domain";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { getTrustedOrigins } from "./auth-env";
 import {
   assertTrustedCookieMutation,
@@ -37,7 +38,6 @@ import { appApi } from "./routes/app-api";
 import { authApi } from "./routes/auth-api";
 import { brandingApi } from "./routes/branding-api";
 import { emailSettingsApi } from "./routes/email-settings-api";
-import { memoryApi } from "./routes/memory-api";
 import { memosApi } from "./routes/memos-api";
 import { memosConnectApi } from "./routes/memos-connect";
 import { isLegacyWireRequest, memosCurrentApi } from "./routes/memos-current";
@@ -113,6 +113,19 @@ export function createFlareMoApp(
   const { resolvePlanLimits, resolveUserPlanLimits } =
     resolveFlareMoOptions(options);
   const app = new Hono<HonoBindings>();
+
+  // Last-resort handler: routes that forgot a try/catch (or middleware that
+  // throws) must still answer JSON, not Hono's text/plain default. HTTPException
+  // keeps its own status; everything else goes through the shared error shape.
+  app.onError((error, c) => {
+    if (error instanceof HTTPException) {
+      return c.json(
+        { error: { message: error.message || "Request failed" } },
+        error.status,
+      );
+    }
+    return jsonError(c, error);
+  });
 
   app.use("*", async (c, next) => {
     c.set("planLimits", await resolvePlanLimits(c.env));
@@ -254,7 +267,6 @@ export function createFlareMoApp(
   app.route("/api/app/admin/email-settings", emailSettingsApi);
   app.route("/api/app/admin/oauth-settings", oauthSettingsApi);
   app.route("/api/app/admin", adminApi);
-  app.route("/api/app/memory", memoryApi);
   app.route("/api/app/projects", projectsApi);
   // The articles API is a low-traffic tree with real sub-paths (`/:id`,
   // `/:id/publish`, …), so the wildcard registration is required. Lazy mounting
@@ -301,15 +313,11 @@ export function createFlareMoApp(
     return c.redirect("/brand/flaremo-mark-light-300.png", 302);
   });
   app.route("/file", memosFileApi);
-  // MCP surfaces + memory MCP: low-traffic tooling endpoints; the route trees
-  // (and their module graphs) load on first MCP request instead of startup.
+  // MCP surfaces are low-traffic tooling endpoints; the route trees (and their
+  // module graphs) load on first MCP request instead of startup.
   mountLazyRoute(app, "/mcp", async () => {
     const { mcpStreamableApi } = await import("./routes/mcp");
     return mcpStreamableApi;
-  });
-  mountLazyRoute(app, "/memory/mcp", async () => {
-    const { memoryMcpApi } = await import("./routes/memory-mcp");
-    return memoryMcpApi;
   });
   app.route("/", memosConnectApi);
   app.route("/", memosSseApi);
@@ -437,8 +445,7 @@ async function dispatchRequestEmbeddingOutbox(
 ) {
   await dispatchEmbeddingOutbox(createDb(env.DB), {
     provider: createEmbeddingProvider(env),
-    memosIndex: createVectorIndex(env, "memo"),
-    memoriesIndex: createVectorIndex(env, "memory"),
+    memosIndex: createVectorIndex(env),
     limits: await options.resolvePlanLimits(env),
     userLimits: hasCustomUserPlanLimits
       ? null
