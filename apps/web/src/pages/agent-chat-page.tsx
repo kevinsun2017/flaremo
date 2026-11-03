@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  ArrowUpIcon,
+  AtSignIcon,
   BookOpenTextIcon,
   BotIcon,
-  CornerDownLeftIcon,
+  ImageIcon,
   MessageSquarePlusIcon,
   PlusIcon,
+  PuzzleIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react";
@@ -250,7 +253,7 @@ export function MessageBubble({
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
         {!isUser && sources && sources.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
-            <span className="mr-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="mr-0.5 flex items-center gap-1 text-xs text-muted-foreground">
               <BookOpenTextIcon className="size-3" />
               {t("agent.sources")}
             </span>
@@ -312,8 +315,10 @@ function Composer({
     );
   }
 
+  const canSend = !!draft.trim() && !send.isPending;
+
   return (
-    <div className="rounded-xl border border-border/60 bg-card/40 p-2">
+    <div className="rounded-xl border border-border/60 bg-card/40">
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -324,19 +329,50 @@ function Composer({
           }
         }}
         placeholder={t("agent.placeholder")}
-        className="min-h-9 border-0 bg-transparent shadow-none focus-visible:ring-0"
+        className="min-h-9 resize-none border-0 bg-transparent px-3 pt-2.5 shadow-none focus-visible:ring-0"
         autoFocus
       />
-      <div className="flex items-center justify-end gap-2">
+      {/* Toolbar row: @mention, skills, image (flomo-style); image/skills are
+          P4 scaffolds — submitting is still text-only. */}
+      <div className="flex items-center gap-1 px-1.5 pb-1.5">
         <Button
-          size="sm"
+          size="icon-sm"
           variant="ghost"
-          className="text-muted-foreground"
-          disabled={!!activeId && send.isPending}
-          onClick={submit}
+          className="text-muted-foreground hover:text-foreground"
+          aria-label={t("agent.mention")}
+          title={t("agent.mention")}
         >
-          <CornerDownLeftIcon />
-          {t("agent.send")}
+          <AtSignIcon className="size-4" />
+        </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="text-muted-foreground hover:text-foreground"
+          aria-label={t("agent.skills")}
+          title={t("agent.skills")}
+        >
+          <PuzzleIcon className="size-4" />
+        </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="text-muted-foreground hover:text-foreground"
+          aria-label={t("agent.attachImage")}
+          title={t("agent.attachImage")}
+        >
+          <ImageIcon className="size-4" />
+        </Button>
+        <div className="flex-1" />
+        {/* In-box circular up-arrow send button. */}
+        <Button
+          size="icon"
+          variant={canSend ? "default" : "secondary"}
+          className="size-8 rounded-full"
+          disabled={!canSend}
+          onClick={submit}
+          aria-label={t("agent.send")}
+        >
+          <ArrowUpIcon className="size-4" />
         </Button>
       </div>
     </div>
