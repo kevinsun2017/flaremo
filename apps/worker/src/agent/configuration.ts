@@ -161,29 +161,20 @@ export async function fetchAgentModelCatalog(
   const headers: Record<string, string> = {};
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   // Try the OpenAI-compatible path first, then the bare path.
-  const diag: string[] = [];
   for (const path of [`${base}/v1/models`, `${base}/models`]) {
-    let res;
-    try {
-      res = await fetch(path, { method: "GET", headers });
-    } catch (error) {
-      diag.push(`${path}: THREW ${error instanceof Error ? error.message : error}`);
-      continue;
-    }
-    const pre = (await res.text().catch(() => "")).slice(0, 120);
-    diag.push(`${path}: status=${res.status} body=${pre}`);
+    const res = await fetch(path, { method: "GET", headers });
     if (res.ok) {
       const body = (await res.json().catch(() => null)) as {
         data?: unknown;
       } | null;
-      diag.push(`  data=${Array.isArray(body?.data) ? body.data.length : typeof body?.data}`);
       return normalizeCatalog(body?.data);
     }
+    // 404/405 → try next path; anything else (401/403/429) is an auth/rate
+    // failure we should surface to the caller.
     if (res.status !== 404 && res.status !== 405) {
       throw new Error(`Model catalog request failed (${res.status})`);
     }
   }
-  (fetchAgentModelCatalog as unknown as { _diag?: string[] })._diag = diag;
   // Both endpoints absent — treat as a gateway with no /models.
   return [];
 }

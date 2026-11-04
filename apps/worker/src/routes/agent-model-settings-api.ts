@@ -148,13 +148,25 @@ agentModelSettingsApi.post("/preview-models", async (c) => {
         parsed.data.baseUrl,
         apiKey,
       );
+      // TEMP DIAG: inline probe of the two candidate endpoints
+      const diag: string[] = [];
+      const base = parsed.data.baseUrl.replace(/\/$/, "");
+      const h: Record<string, string> = {};
+      if (apiKey) h.authorization = `Bearer ${apiKey}`;
+      for (const p of [`${base}/v1/models`, `${base}/models`]) {
+        try {
+          const r = await fetch(p, { method: "GET", headers: h });
+          const txt = (await r.text().catch(() => "")).slice(0, 80);
+          diag.push(`${p} -> ${r.status} :: ${txt}`);
+        } catch (e) {
+          diag.push(`${p} -> THREW ${e instanceof Error ? e.message : e}`);
+        }
+      }
       return c.json(
         {
           models,
           ok: true,
-          diag:
-            (fetchAgentModelCatalog as unknown as { _diag?: string[] })._diag ??
-            ["no diag"],
+          diag,
         },
         200,
         { "Cache-Control": "no-store" },
