@@ -118,6 +118,13 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
             content,
             createdAt: now,
           });
+          // 用首条消息截断作为会话标题，避免全部显示“新对话”
+          if (conv[0]?.title === "新对话" || conv[0]?.title === "新会话") {
+            await db
+              .update(agentConversations)
+              .set({ title: content.slice(0, 24) || "新对话", updatedAt: now })
+              .where(eq(agentConversations.id, convId));
+          }
         }
 
         const runBackground = async () => {

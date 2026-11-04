@@ -5,6 +5,7 @@ import {
   AtSignIcon,
   BookOpenTextIcon,
   BotIcon,
+  MoreHorizontalIcon,
   ChevronDownIcon,
   ImageIcon,
   PanelRightIcon,
@@ -51,6 +52,16 @@ export function AgentChatDialog() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const card = document.querySelector("[data-agent-menu]");
+      if (card && !card.contains(target)) setAgentMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [agentMenuOpen]);
   const [menuTab, setMenuTab] = useState<"chat" | "tasks">("chat");
   useEffect(() => {
     const handler = () => setOpen(true);
@@ -188,14 +199,14 @@ export function AgentChatDialog() {
             >
               <BotIcon className="size-5 text-primary" />
               {t("agent.title")}
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon className={cn("size-4 transition-transform", agentMenuOpen && "rotate-180")} />
             </button>
             <div className="flex-1" />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
                   <Button size="icon-sm" variant="ghost" aria-label="menu">
-                    <span className="text-lg leading-none">…</span>
+                    <MoreHorizontalIcon />
                   </Button>
                 }
               />
@@ -232,7 +243,7 @@ export function AgentChatDialog() {
 
           {/* Agent ∨ dropdown card */}
           {agentMenuOpen && (
-            <div className="absolute left-4 top-14 z-50 w-72 rounded-xl border border-border/60 bg-popover p-2 shadow-xl">
+            <div data-agent-menu className="absolute left-4 top-14 z-50 w-full max-w-[calc(100%-2rem)] rounded-xl border border-border/60 bg-popover p-2 shadow-xl">
               <div className="mb-2 flex rounded-lg bg-muted p-1">
                 <button
                   type="button"
@@ -257,12 +268,12 @@ export function AgentChatDialog() {
               </div>
               {menuTab === "chat" ? (
                 <div className="max-h-60 overflow-y-auto">
-                  {(conversations.data?.conversations ?? []).length === 0 ? (
+                  {((conversations.data?.conversations ?? []).filter((c) => !/^async smoke/i.test(c.title))).length === 0 ? (
                     <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                       {t("agent.noHistory")}
                     </div>
                   ) : (
-                    (conversations.data?.conversations ?? []).map((c) => (
+                    (conversations.data?.conversations ?? []).filter((c) => !/^async smoke/i.test(c.title)).map((c) => (
                       <button
                         key={c.id}
                         type="button"

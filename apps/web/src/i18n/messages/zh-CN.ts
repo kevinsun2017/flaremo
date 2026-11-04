@@ -5,7 +5,7 @@
 const messages = {
   "nav.articles": "文章",
   "nav.agent": "Agent 对话",
-  "agent.title": "Agent 对话",
+  "agent.title": "Agent",
   "agent.dockToggle": "停靠/浮窗切换",
   "agent.tabChat": "对话",
   "agent.tabTasks": "定时任务",
