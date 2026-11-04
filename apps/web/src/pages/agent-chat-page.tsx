@@ -5,8 +5,8 @@ import {
   AtSignIcon,
   BookOpenTextIcon,
   BotIcon,
+  ChevronDownIcon,
   ImageIcon,
-  MessageSquarePlusIcon,
   PanelRightIcon,
   PlusIcon,
   PuzzleIcon,
@@ -25,6 +25,12 @@ import {
 } from "@/api";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -44,12 +50,13 @@ export function AgentChatDialog() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [menuTab, setMenuTab] = useState<"chat" | "tasks">("chat");
   useEffect(() => {
     const handler = () => setOpen(true);
     window.addEventListener("flaremo:open-agent", handler);
     return () => window.removeEventListener("flaremo:open-agent", handler);
   }, []);
-  const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
   const [docked, setDocked] = useState(() => {
     try {
       return localStorage.getItem("flaremo.agent.docked") === "1";
@@ -174,19 +181,36 @@ export function AgentChatDialog() {
         >
           {/* Header */}
           <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
-            <BotIcon className="size-5 text-primary" />
-            <span className="flex-1 truncate text-sm font-semibold">
-              {t("agent.title")}
-            </span>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              disabled={create.isPending}
-              onClick={startNew}
-              aria-label={t("agent.newConversation")}
+            <button
+              type="button"
+              onClick={() => setAgentMenuOpen((v) => !v)}
+              className="flex items-center gap-1 text-sm font-semibold"
             >
-              <MessageSquarePlusIcon />
-            </Button>
+              <BotIcon className="size-5 text-primary" />
+              {t("agent.title")}
+              <ChevronDownIcon className="size-4" />
+            </button>
+            <div className="flex-1" />
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button size="icon-sm" variant="ghost" aria-label="menu">
+                    <span className="text-lg leading-none">…</span>
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={startNew} disabled={create.isPending}>
+                  {t("agent.newConversation")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => toast.info(t("agent.manage"))}>
+                  {t("agent.manage")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDocked(false)}>
+                  {t("agent.restoreSize")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               size="icon-sm"
               variant="ghost"
@@ -206,46 +230,70 @@ export function AgentChatDialog() {
             </Button>
           </div>
 
-          {/* Tabs: 对话 / 定时任务 */}
-          <div className="flex border-b border-border/60">
-            <button
-              type="button"
-              onClick={() => setActiveTab("chat")}
-              className={cn(
-                "flex-1 px-4 py-2 text-sm font-medium",
-                activeTab === "chat"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-muted-foreground",
+          {/* Agent ∨ dropdown card */}
+          {agentMenuOpen && (
+            <div className="absolute left-4 top-14 z-50 w-72 rounded-xl border border-border/60 bg-popover p-2 shadow-xl">
+              <div className="mb-2 flex rounded-lg bg-muted p-1">
+                <button
+                  type="button"
+                  onClick={() => setMenuTab("chat")}
+                  className={cn(
+                    "flex-1 rounded-md px-3 py-1.5 text-sm",
+                    menuTab === "chat" ? "bg-background shadow-sm" : "text-muted-foreground",
+                  )}
+                >
+                  {t("agent.tabChat")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMenuTab("tasks")}
+                  className={cn(
+                    "flex-1 rounded-md px-3 py-1.5 text-sm",
+                    menuTab === "tasks" ? "bg-background shadow-sm" : "text-muted-foreground",
+                  )}
+                >
+                  {t("agent.tabTasks")}
+                </button>
+              </div>
+              {menuTab === "chat" ? (
+                <div className="max-h-60 overflow-y-auto">
+                  {(conversations.data?.conversations ?? []).length === 0 ? (
+                    <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      {t("agent.noHistory")}
+                    </div>
+                  ) : (
+                    (conversations.data?.conversations ?? []).map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveId(c.id);
+                          setAgentMenuOpen(false);
+                        }}
+                        className="block w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
+                      >
+                        {c.title}
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  {t("agent.tasksEmpty")}
+                </div>
               )}
-            >
-              {t("agent.tabChat")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("tasks")}
-              className={cn(
-                "flex-1 px-4 py-2 text-sm font-medium",
-                activeTab === "tasks"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-muted-foreground",
-              )}
-            >
-              {t("agent.tabTasks")}
-            </button>
-          </div>
-
-          {/* Chat body */}
-          {activeTab === "chat" && (
-            <ChatScroll
-              activeId={activeId}
-              messages={messages.data?.messages}
-              loading={messages.isLoading}
-              sources={sources}
-            />
+            </div>
           )}
 
+          {/* Chat body */}
+          <ChatScroll
+            activeId={activeId}
+            messages={messages.data?.messages}
+            loading={messages.isLoading}
+            sources={sources}
+          />
+
           {/* Composer */}
-          {activeTab === "chat" && (
           <div className="border-t border-border/60 p-3">
             <Composer
               activeId={activeId}
@@ -258,13 +306,7 @@ export function AgentChatDialog() {
               {t("agent.disclaimer")}
             </p>
           </div>
-          )}
 
-          {activeTab === "tasks" && (
-            <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-              {t("agent.tasksEmpty")}
-            </div>
-          )}
         </div>
       )}
     </>
