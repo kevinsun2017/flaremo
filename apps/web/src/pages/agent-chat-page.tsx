@@ -323,14 +323,14 @@ function Composer({
 
   const submit = () => {
     const content = draft.trim();
-    if (!content || !activeId || send.isPending) return;
+    if (!content || !activeId) return;
     setSendError(null);
     send.mutate({ content, retry: false });
   };
 
   const retry = () => {
     const content = draft.trim();
-    if (!content || !activeId || send.isPending) return;
+    if (!content || !activeId) return;
     setSendError(null);
     send.mutate({ content, retry: true });
   };
