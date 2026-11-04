@@ -33,7 +33,10 @@ agentModelSettingsApi.use("*", async (c, next) => {
     return jsonError(c, error);
   }
 });
-agentModelSettingsApi.use("*", bodyLimit({ maxSize: 8192 }));
+// The saved model list can carry hundreds of catalog entries (e.g. ~32 KB for
+// all 423 OpenRouter models), so the body limit must accommodate a full
+// multi-select save rather than a small settings form.
+agentModelSettingsApi.use("*", bodyLimit({ maxSize: 1024 * 1024 }));
 
 // Secrets are write-only: masked previews are computed server-side and full
 // values never leave the Worker. Base URL + model are non-secret identifiers.
