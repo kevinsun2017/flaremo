@@ -99,6 +99,9 @@ export function AgentChatDialog() {
     queryKey: queryKeys.agent.messages(activeId ?? ""),
     queryFn: () => listMessages(activeId!),
     enabled: !!activeId,
+    // Keep the already-rendered list while polling/refetching so the panel
+    // never flashes blank mid-send (user content "disappears").
+    placeholderData: (prev) => prev,
   });
 
   // Autocreate the first conversation when the panel opens and none is active.
@@ -444,15 +447,49 @@ function Composer({
   const send = useMutation({
     mutationFn: ({ content, retry }: { content: string; retry?: boolean }) =>
       sendMessage(activeId!, content, { retry }),
-    onSuccess: () => {
+    onMutate: async ({ content, retry }) => {
+      await qc.cancelQueries({
+        queryKey: queryKeys.agent.messages(activeId!),
+      });
+      const queryKey = queryKeys.agent.messages(activeId!);
+      const prev = qc.getQueryData<{ messages: AgentChatMessage[] }>(queryKey);
+      if (!retry) {
+        // Optimistically append the user message so it renders instantly;
+        // the POST refetch will reconcile (dedupe handled by real fetch).
+        const optimistic: AgentChatMessage = {
+          id: `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          conversationId: activeId!,
+          userId: "",
+          role: "user",
+          content,
+          createdAt: new Date().toISOString(),
+        };
+        qc.setQueryData<{ messages: AgentChatMessage[] }>(queryKey, (old) => ({
+          messages: [...(old?.messages ?? []), optimistic],
+        }));
+      }
+      return { prev, queryKey };
+    },
+    onSuccess: (
+      _data,
+      _vars,
+      ctx: { prev?: { messages: AgentChatMessage[] }; queryKey: unknown },
+    ) => {
       setDraft("");
       setSendError(null);
       onSent();
-      // 用户消息已发出，立即刷新列表显示用户消息；assistant 由后台生成，轮询获取
-      qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId!) });
+      // Reconcile: refetch the server list (real ids) — placeholderData keeps
+      // the optimistic row visible until the authoritative fetch returns.
+      if (ctx?.queryKey) {
+        qc.invalidateQueries({ queryKey: ctx.queryKey as string[] });
+      }
       onCreated(activeId!);
     },
-    onError: (error: unknown) => {
+    onError: (error: unknown, _vars, ctx) => {
+      // Roll back the optimistic insert on failure.
+      if (ctx?.prev) {
+        qc.setQueryData(ctx.queryKey as string[], ctx.prev);
+      }
       const msg = error instanceof ApiError ? error.message : t("agent.sendFailed");
       setSendError(msg);
       toast.error(msg);
