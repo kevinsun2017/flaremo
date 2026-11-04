@@ -94,6 +94,10 @@ export type FlareMoEnv = Env & {
   FLAREMO_LLM_API_URL?: string;
   FLAREMO_LLM_API_KEY?: string;
   FLAREMO_LLM_MODEL?: string;
+  // Backup endpoint for the LLM bridge (see FLAREMO_LLM_API_URL). Used only
+  // when the primary fails with a network/timeout error or a 5xx; auth
+  // failures (401/403) never retry the backup.
+  FLAREMO_LLM_API_URL_FALLBACK?: string;
   // Usage-panel limits. Defaults are the Workers Free Vectorize allowance.
   FLAREMO_VECTORIZE_STORED_LIMIT?: string;
   FLAREMO_VECTORIZE_QUERIED_LIMIT?: string;
