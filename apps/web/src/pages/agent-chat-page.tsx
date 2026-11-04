@@ -44,6 +44,11 @@ export function AgentChatDialog() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener("flaremo:open-agent", handler);
+    return () => window.removeEventListener("flaremo:open-agent", handler);
+  }, []);
   const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
   const [docked, setDocked] = useState(() => {
     try {

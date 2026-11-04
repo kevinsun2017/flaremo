@@ -1,6 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   ArchiveIcon,
+  BotIcon,
   CalendarDaysIcon,
   ChevronRightIcon,
   FileTextIcon,
@@ -200,6 +201,17 @@ export const FlareMoExplorer = memo(function FlareMoExplorer({
           <FileTextIcon />
           <span className="min-w-0 flex-1 truncate">{t("nav.articles")}</span>
         </Link>
+        <button
+          type="button"
+          className="md:hidden flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={() => {
+            onNavigate?.();
+            window.dispatchEvent(new CustomEvent("flaremo:open-agent"));
+          }}
+        >
+          <BotIcon />
+          <span className="min-w-0 flex-1 truncate">{t("nav.agent")}</span>
+        </button>
       </nav>
 
       <section className="mt-4 flex flex-col gap-0.5">
