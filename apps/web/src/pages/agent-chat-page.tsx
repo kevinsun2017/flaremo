@@ -44,6 +44,7 @@ export function AgentChatDialog() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"chat" | "tasks">("chat");
   const [docked, setDocked] = useState(() => {
     try {
       return localStorage.getItem("flaremo.agent.docked") === "1";
@@ -200,15 +201,46 @@ export function AgentChatDialog() {
             </Button>
           </div>
 
+          {/* Tabs: 对话 / 定时任务 */}
+          <div className="flex border-b border-border/60">
+            <button
+              type="button"
+              onClick={() => setActiveTab("chat")}
+              className={cn(
+                "flex-1 px-4 py-2 text-sm font-medium",
+                activeTab === "chat"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-muted-foreground",
+              )}
+            >
+              {t("agent.tabChat")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("tasks")}
+              className={cn(
+                "flex-1 px-4 py-2 text-sm font-medium",
+                activeTab === "tasks"
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-muted-foreground",
+              )}
+            >
+              {t("agent.tabTasks")}
+            </button>
+          </div>
+
           {/* Chat body */}
-          <ChatScroll
-            activeId={activeId}
-            messages={messages.data?.messages}
-            loading={messages.isLoading}
-            sources={sources}
-          />
+          {activeTab === "chat" && (
+            <ChatScroll
+              activeId={activeId}
+              messages={messages.data?.messages}
+              loading={messages.isLoading}
+              sources={sources}
+            />
+          )}
 
           {/* Composer */}
+          {activeTab === "chat" && (
           <div className="border-t border-border/60 p-3">
             <Composer
               activeId={activeId}
@@ -221,6 +253,13 @@ export function AgentChatDialog() {
               {t("agent.disclaimer")}
             </p>
           </div>
+          )}
+
+          {activeTab === "tasks" && (
+            <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
+              {t("agent.tasksEmpty")}
+            </div>
+          )}
         </div>
       )}
     </>
