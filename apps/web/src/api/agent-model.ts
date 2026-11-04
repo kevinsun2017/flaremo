@@ -8,6 +8,7 @@ export type AgentModelSettings = {
   provider: "openrouter" | "nvidia" | "custom" | null;
   baseUrl: string;
   model: string;
+  models: Array<{ id: string; displayName: string }>;
   apiKeyPreview: string;
   canEncrypt: boolean;
   unreadable: boolean;
@@ -15,6 +16,18 @@ export type AgentModelSettings = {
 
 export const getAgentModelSettings = () =>
   apiRequest<AgentModelSettings>("/api/app/agent-model-settings");
+
+export const previewAgentModelCatalog = (input: {
+  baseUrl: string;
+  apiKey: string;
+}) =>
+  apiRequest<{ ok: boolean; models: Array<{ id: string; displayName: string }> }>(
+    "/api/app/agent-model-settings/preview-models",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
 
 export const saveAgentModelSettings = (input: unknown) =>
   apiRequest<AgentModelSettings>("/api/app/agent-model-settings", {

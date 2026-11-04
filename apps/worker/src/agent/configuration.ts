@@ -19,7 +19,20 @@ export const agentModelSchema = z
     provider: z.enum(["openrouter", "nvidia", "custom"]),
     baseUrl: z.string().trim().max(256).default(""),
     apiKey: z.string().trim().max(2048).default(""),
+    // `model` is the currently active model id (kept for chat routing and
+    // backwards compatibility with v0/v1 envelopes).
     model: z.string().trim().max(256).default(""),
+    // The full model catalog the owner picked from. Each entry carries the
+    // provider-reported id and a human label.
+    models: z
+      .array(
+        z.object({
+          id: z.string().trim().min(1).max(256),
+          displayName: z.string().trim().max(256).optional().default(""),
+        }),
+      )
+      .optional()
+      .default([]),
     // Reserve room for future per-install fields without a shape migration.
     extra: z.record(z.string(), z.unknown()).optional(),
   })
@@ -102,6 +115,68 @@ export async function openAgentModel(
 /** Whether the config is complete enough to actually route a chat request. */
 export function isAgentModelComplete(value: AgentModelConfig): boolean {
   return Boolean(value.baseUrl.trim() && value.model.trim());
+}
+
+export type AgentModelCatalogEntry = {
+  id: string;
+  displayName: string;
+};
+
+// Normalize provider /models listings (OpenRouter, NVIDIA NIM, and most
+// OpenAI-compatible gateways all return { data: [{ id, name? }] }).
+const catalogResponseSchema = z
+  .object({
+    data: z
+      .array(
+        z.object({
+          id: z.string().trim().min(1),
+          name: z.string().trim().optional(),
+        }),
+      )
+      .optional()
+      .default([]),
+  })
+  .loose()
+  .passthrough();
+
+function normalizeCatalog(raw: unknown): AgentModelCatalogEntry[] {
+  const parsed = catalogResponseSchema.safeParse(raw);
+  if (!parsed.success) return [];
+  return parsed.data.data.map((entry) => ({
+    id: entry.id,
+    displayName: entry.name || entry.id,
+  }));
+}
+
+/**
+ * Fetch the provider's model catalog using baseUrl + apiKey. Returns [] when
+ * the endpoint is absent (some custom gateways skip /models). Throws on a
+ * non-2xx / auth failure so callers can reject saving with a bad key.
+ */
+export async function fetchAgentModelCatalog(
+  baseUrl: string,
+  apiKey: string,
+): Promise<AgentModelCatalogEntry[]> {
+  const base = baseUrl.replace(/\/$/, "");
+  const headers: Record<string, string> = {};
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  // Try the OpenAI-compatible path first, then the bare path.
+  for (const path of [`${base}/v1/models`, `${base}/models`]) {
+    const res = await fetch(path, { method: "GET", headers });
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        data?: unknown;
+      } | null;
+      return normalizeCatalog(body?.data);
+    }
+    // 404/405 → try next path; anything else (401/403/429) is an auth/rate
+    // failure we should surface to the caller.
+    if (res.status !== 404 && res.status !== 405) {
+      throw new Error(`Model catalog request failed (${res.status})`);
+    }
+  }
+  // Both endpoints absent — treat as a gateway with no /models.
+  return [];
 }
 
 function fallbackFromEnv(env: FlareMoEnv): ResolvedAgentModel | null {

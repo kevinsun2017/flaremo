@@ -12,6 +12,7 @@ import { z } from "zod";
 import {
   agentModelSchema,
   canEncryptAgentModelConfig,
+  fetchAgentModelCatalog,
   isAgentModelComplete,
   openAgentModel,
   sealAgentModel,
@@ -88,6 +89,7 @@ async function getAgentModelSettings(c: Context<HonoBindings>) {
       configured: dbActive || envConfigured,
       baseUrl: value?.baseUrl ?? "",
       model: value?.model ?? "",
+      models: value?.models ?? [],
       provider: value?.provider ?? null,
       apiKeyPreview: maskKey(value?.apiKey ?? ""),
       canEncrypt: canEncryptAgentModelConfig(
@@ -107,6 +109,65 @@ const inputSchema = z
     config: agentModelSchema,
   })
   .loose();
+
+// "获取模型列表": proxy the provider's /models with the base URL and key the
+// owner is editing. A blank key means "use the stored one" (the full key never
+// leaves the Worker, only a masked preview does).
+const previewSchema = z
+  .object({
+    baseUrl: z.string().trim().min(1).max(256),
+    apiKey: z.string().trim().max(2048).optional().default(""),
+  })
+  .loose();
+
+agentModelSettingsApi.post("/preview-models", async (c) => {
+  try {
+    const parsed = previewSchema.safeParse(
+      await c.req.json().catch(() => null),
+    );
+    if (!parsed.success)
+      return c.json({ error: { message: "Invalid request" } }, 400);
+    const { db } = await getBrowserRequestContext(c);
+    let apiKey = parsed.data.apiKey;
+    if (!apiKey) {
+      const row = await readAgentModelConfig(db);
+      if (row?.ciphertext) {
+        try {
+          const old = await openAgentModel(
+            c.env.FLAREMO_AGENT_MODEL_CONFIG_KEY,
+            row.ciphertext,
+          );
+          apiKey = old.apiKey;
+        } catch {
+          // No stored key to fall back on; run with an empty one.
+        }
+      }
+    }
+    try {
+      const models = await fetchAgentModelCatalog(
+        parsed.data.baseUrl,
+        apiKey,
+      );
+      return c.json(
+        { models, ok: true },
+        200,
+        { "Cache-Control": "no-store" },
+      );
+    } catch (error) {
+      return c.json(
+        {
+          ok: false,
+          error: {
+            message: error instanceof Error ? error.message : "Request failed",
+          },
+        },
+        400,
+      );
+    }
+  } catch (error) {
+    return jsonError(c, error);
+  }
+});
 
 agentModelSettingsApi.put("/", async (c) => {
   try {
@@ -154,6 +215,23 @@ async function putAgentModelSettings(c: Context<HonoBindings>) {
       { error: { message: "Base URL and model are required" } },
       400,
     );
+  // The owner expects a save to keep working end-to-end: hit the provider's
+  // /models with the effective key first and refuse to persist when it is
+  // unreachable or auth fails. A gateway with no /models (returns []) is
+  // still accepted.
+  try {
+    await fetchAgentModelCatalog(value.baseUrl, value.apiKey);
+  } catch {
+    return c.json(
+      {
+        error: {
+          message:
+            "无法连接模型服务商，请检查 API Base URL 和 API Key 后重试。",
+        },
+      },
+      400,
+    );
+  }
   const ciphertext = await sealAgentModel(
     c.env.FLAREMO_AGENT_MODEL_CONFIG_KEY,
     value,
@@ -174,6 +252,7 @@ async function putAgentModelSettings(c: Context<HonoBindings>) {
       // Echo masked preview back so the form keeps showing what it saved.
       baseUrl: value.baseUrl,
       model: value.model,
+      models: value.models ?? [],
       provider: value.provider,
       apiKeyPreview: maskKey(value.apiKey),
       configured: true,
