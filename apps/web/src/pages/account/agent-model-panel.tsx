@@ -75,9 +75,13 @@ export function AgentModelPanel() {
     setEnabled(value.enabled);
   }, [settingsQuery.data]);
 
+  // env is always the fallback in prod, so it must never lock editing: the
+  // owner can always save a DB config (or clear it) to control which model
+  // routes. `envManaged` here only labels the currently-active source.
   const envManaged = config?.source === "environment";
+  const dbManaged = config?.source === "database";
   const editingDisabled =
-    busy || envManaged || !config || Boolean(config.unreadable);
+    busy || !config || Boolean(config.unreadable);
 
   async function run(
     action: "save" | "toggle" | "delete",
@@ -116,15 +120,20 @@ export function AgentModelPanel() {
   }
 
   const handleToggleEnabled = (nextEnabled: boolean) => {
+    if (!config?.revision) return; // nothing saved yet; configure first
     setEnabled(nextEnabled);
-    if (!config) return;
     void run(
       "toggle",
       () =>
         saveAgentModelSettings({
           revision: config.revision,
           enabled: nextEnabled,
-          config: { provider, baseUrl, apiKey, model },
+          config: {
+            provider,
+            baseUrl: config.baseUrl,
+            apiKey: "", // blank keeps the stored key
+            model: config.model,
+          },
         }),
       t("agentModel.saved"),
     );
@@ -136,11 +145,11 @@ export function AgentModelPanel() {
     custom: t("agentModel.providerCustom"),
   };
 
-  const configuredLabel = envManaged
-    ? t("settings.status.envManaged")
+  const configuredLabel = dbManaged
+    ? t("agentModel.statusConfigured")
     : config?.configured
-      ? t("agentModel.statusConfigured")
-      : t("agentModel.statusNotConfigured");
+      ? t("settings.status.envManaged")
+      : t("settings.status.notConfigured");
 
   if (!config && settingsQuery.isPending) {
     return (
@@ -163,13 +172,15 @@ export function AgentModelPanel() {
     <div className="flex flex-col gap-5">
       <SettingsSectionGroup
         footer={
-          envManaged
-            ? t("agentModel.envManaged")
-            : !config?.canEncrypt
-              ? t("agentModel.plainStore")
-              : config?.unreadable
-                ? t("agentModel.unreadable")
-                : undefined
+          dbManaged
+            ? undefined
+            : envManaged
+              ? t("agentModel.envManaged")
+              : !config?.canEncrypt
+                ? t("agentModel.plainStore")
+                : config?.unreadable
+                  ? t("agentModel.unreadable")
+                  : undefined
         }
       >
         <SettingsRow
@@ -177,7 +188,7 @@ export function AgentModelPanel() {
           action={
             <Switch
               checked={enabled}
-              disabled={editingDisabled}
+              disabled={editingDisabled || !config?.revision}
               onCheckedChange={handleToggleEnabled}
             />
           }
@@ -212,7 +223,7 @@ export function AgentModelPanel() {
         />
       </SettingsSectionGroup>
 
-      {config?.revision && !envManaged && (
+      {config?.revision && (
         <SettingsSectionGroup>
           <SettingsRow
             destructive

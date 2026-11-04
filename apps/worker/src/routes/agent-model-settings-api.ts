@@ -68,17 +68,24 @@ async function getAgentModelSettings(c: Context<HonoBindings>) {
   const envConfigured = Boolean(
     c.env.FLAREMO_LLM_API_URL || c.env.FLAREMO_LLM_MODEL,
   );
-  const source = envConfigured
-    ? ("environment" as const)
-    : value
-      ? ("database" as const)
+  // DB config is the effective source when it is complete and enabled;
+  // otherwise (or while it is only partially configured) env is what routes.
+  // env is always present in prod as the fallback, so it must never lock the
+  // panel: the owner can always save a DB config to override it.
+  const dbActive = Boolean(
+    value && row?.enabled && isAgentModelComplete(value),
+  );
+  const source = dbActive
+    ? ("database" as const)
+    : envConfigured
+      ? ("environment" as const)
       : ("none" as const);
   return c.json(
     {
       revision: row?.revision ?? null,
-      enabled: Boolean(row?.enabled && value),
+      enabled: dbActive,
       source,
-      configured: envConfigured || Boolean(value),
+      configured: dbActive || envConfigured,
       baseUrl: value?.baseUrl ?? "",
       model: value?.model ?? "",
       provider: value?.provider ?? null,
