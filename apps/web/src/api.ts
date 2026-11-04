@@ -4,6 +4,7 @@
 
 export * from "./api/account";
 export * from "./api/agent";
+export * from "./api/agent-model";
 export * from "./api/articles";
 export * from "./api/attachments";
 export * from "./api/auth";

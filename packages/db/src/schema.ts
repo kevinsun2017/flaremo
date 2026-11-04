@@ -1,5 +1,6 @@
 export * from "./schema/auth";
 export * from "./schema/agent";
+export * from "./schema/agent-model";
 export * from "./schema/content";
 export * from "./schema/instance";
 export * from "./schema/memos";

@@ -1,6 +1,7 @@
 import {
   ArrowDownUpIcon,
   BellRingIcon,
+  BotIcon,
   FileUpIcon,
   GaugeIcon,
   type LucideIcon,
@@ -19,6 +20,7 @@ export type SettingsSection =
   | "uploads"
   | "push"
   | "voice"
+  | "agent-model"
   | "usage"
   | "transfer"
   | "team"
@@ -110,6 +112,12 @@ export function settingsNavGroups({
               },
               ...(isInstanceOwner
                 ? [
+                    {
+                      icon: BotIcon,
+                      iconBg: "bg-muted text-muted-foreground",
+                      id: "agent-model" as const,
+                      label: t("agentModel.nav"),
+                    },
                     {
                       icon: PaintbrushIcon,
                       iconBg: "bg-muted text-muted-foreground",

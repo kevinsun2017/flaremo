@@ -25,6 +25,12 @@ const VoicePanel = lazy(() =>
   })),
 );
 
+const AgentModelPanel = lazy(() =>
+  import("./agent-model-panel").then((module) => ({
+    default: module.AgentModelPanel,
+  })),
+);
+
 function VoicePanelSkeleton() {
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -91,6 +97,12 @@ export function SettingsSectionContent({
       return showVoiceSettings ? (
         <Suspense fallback={<VoicePanelSkeleton />}>
           <VoicePanel key={voiceUserId} />
+        </Suspense>
+      ) : null;
+    case "agent-model":
+      return isInstanceOwner ? (
+        <Suspense fallback={<VoicePanelSkeleton />}>
+          <AgentModelPanel />
         </Suspense>
       ) : null;
     case "usage":

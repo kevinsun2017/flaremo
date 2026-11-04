@@ -7,7 +7,7 @@ import { getRequestContext, type HonoBindings } from "../../context";
 import { createEmbeddingProvider, createVectorIndex, memoSearchNamespaces } from "../../embedding";
 import { jsonError } from "../../http";
 import { zValidator } from "../../validated";
-import { chatWithMagpie } from "../llm";
+import { chatWithAgentModel } from "../llm";
 
 const createConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
@@ -179,7 +179,7 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
 
             const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${ragContext}`;
             try {
-              const reply = await chatWithMagpie(c.env, [
+              const reply = await chatWithAgentModel(c.env, db, [
                 { role: "system", content: systemPrompt },
                 ...llmMessages,
               ]);

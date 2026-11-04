@@ -260,6 +260,14 @@ export function createFlareMoApp(
     const { voiceSettingsApi } = await import("./routes/voice-settings-api");
     return voiceSettingsApi;
   });
+  // Instance-level Agent model selection (owner-only). Low-traffic: lazy so
+  // the isolate only pays the agent config module when the panel is used.
+  mountLazyRoute(app, "/api/app/agent-model-settings", async () => {
+    const { agentModelSettingsApi } = await import(
+      "./routes/agent-model-settings-api"
+    );
+    return agentModelSettingsApi;
+  });
   app.route("/api/app/account", accountApi);
   // Registered before adminApi so these owner settings routes win; paths
   // adminApi owns (/plugins GET/PUT) still fall through to it.

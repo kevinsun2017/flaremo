@@ -1,38 +1,72 @@
+import type { FlareMoDb } from "@flaremo/db";
+import { resolveAgentModel } from "../agent/configuration";
 import type { FlareMoEnv } from "../env";
 
 /**
- * Minimal OpenAI-compatible chat bridge for the Agent (P1). Speaks to the
- * local Magpie bridge (or any OpenAI-compatible endpoint) at FLAREMO_LLM_API_URL.
+ * Minimal OpenAI-compatible chat bridge for the Agent (P1).
  *
  * Non-streaming for now (P1); SSE streaming is P4. The model id defaults to
  * Magpie's auto routing group.
  */
 const DEFAULT_MODEL = "auto/GLM-5.2";
 
+type ChatMessage = Array<{
+  role: "system" | "user" | "assistant";
+  content: string;
+}>;
+
 export async function chatWithMagpie(
   env: FlareMoEnv,
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  messages: ChatMessage,
 ): Promise<string> {
   const base = env.FLAREMO_LLM_API_URL;
-  if (!base) {
+  const resolved = {
+    baseUrl: base ?? "",
+    apiKey: env.FLAREMO_LLM_API_KEY ?? "",
+    model: env.FLAREMO_LLM_MODEL ?? DEFAULT_MODEL,
+  };
+  return chatCore(resolved, messages);
+}
+
+// DB-resolved agent model (settings panel) when configured, else env secrets.
+// Prefer this in request handlers with a database handle.
+export async function chatWithAgentModel(
+  env: FlareMoEnv,
+  db: FlareMoDb,
+  messages: ChatMessage,
+): Promise<string> {
+  const resolved = await resolveAgentModel(env, db);
+  if (!resolved) {
     throw new Error(
-      "FLAREMO_LLM_API_URL not set — agent chat needs an LLM bridge",
+      "LLM not configured — set Agent model in Settings or FLAREMO_LLM_API_URL",
     );
   }
-  const model = env.FLAREMO_LLM_MODEL ?? DEFAULT_MODEL;
+  return chatCore(
+    { baseUrl: resolved.baseUrl, apiKey: resolved.apiKey, model: resolved.model },
+    messages,
+  );
+}
 
+async function chatCore(
+  resolved: { baseUrl: string; apiKey: string; model: string },
+  messages: ChatMessage,
+): Promise<string> {
+  const base = resolved.baseUrl;
+  if (!base) {
+    throw new Error("LLM bridge URL not set");
+  }
   const headers: Record<string, string> = {
     "content-type": "application/json",
   };
-  if (env.FLAREMO_LLM_API_KEY) {
-    headers.authorization = `Bearer ${env.FLAREMO_LLM_API_KEY}`;
+  if (resolved.apiKey) {
+    headers.authorization = `Bearer ${resolved.apiKey}`;
   }
 
   const res = await fetch(`${base.replace(/\/$/, "")}/v1/chat/completions`, {
     method: "POST",
     headers,
     body: JSON.stringify({
-      model,
+      model: resolved.model,
       messages,
       temperature: 0.7,
     }),

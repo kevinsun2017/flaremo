@@ -4,6 +4,9 @@ export type FlareMoEnv = Env & {
   // Voice capture ASR providers (see src/asr/provider.ts). Provider selection
   // is a public var; provider credentials are Worker secrets.
   FLAREMO_VOICE_CONFIG_KEY?: string;
+  // Encryption key for the instance-level Agent LLM config (resolves
+  // FLAREMO_AGENT_MODEL_CONFIG / _LLM_* when the Agent settings panel saves).
+  FLAREMO_AGENT_MODEL_CONFIG_KEY?: string;
   FLAREMO_ASR_PROVIDER?: string;
   FLAREMO_ASR_MODEL?: string;
   FLAREMO_ASR_DASHSCOPE_API_KEY?: string;
