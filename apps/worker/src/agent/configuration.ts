@@ -140,7 +140,14 @@ const catalogResponseSchema = z
   .passthrough();
 
 function normalizeCatalog(raw: unknown): AgentModelCatalogEntry[] {
-  const parsed = catalogResponseSchema.safeParse(raw);
+  // Accept both the bare `data` array and the wrapped `{ data: [...] }` body,
+  // since the schema below describes the wrapper shape. Passing a raw array
+  // straight into a z.object() schema always fails safeParse and silently
+  // yields [], which made OpenRouter look like it had no models.
+  const data = Array.isArray(raw)
+    ? raw
+    : (raw as { data?: unknown } | null)?.data;
+  const parsed = catalogResponseSchema.safeParse({ data });
   if (!parsed.success) return [];
   return parsed.data.data.map((entry) => ({
     id: entry.id,
