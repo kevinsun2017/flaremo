@@ -149,7 +149,13 @@ agentModelSettingsApi.post("/preview-models", async (c) => {
         apiKey,
       );
       return c.json(
-        { models, ok: true },
+        {
+          models,
+          ok: true,
+          diag:
+            (fetchAgentModelCatalog as unknown as { _diag?: string[] })._diag ??
+            ["no diag"],
+        },
         200,
         { "Cache-Control": "no-store" },
       );
