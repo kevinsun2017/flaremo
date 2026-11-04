@@ -120,7 +120,13 @@ export function AgentModelPanel() {
   }
 
   const handleToggleEnabled = (nextEnabled: boolean) => {
-    if (!config?.revision) return; // nothing saved yet; configure first
+    // Nothing saved yet: flip the intent and walk the owner through
+    // configuring instead of silently ignoring the tap.
+    if (!config?.revision) {
+      setEnabled(nextEnabled);
+      setConfigDialogOpen(true);
+      return;
+    }
     setEnabled(nextEnabled);
     void run(
       "toggle",
@@ -187,8 +193,8 @@ export function AgentModelPanel() {
           label={t("agentModel.enabled")}
           action={
             <Switch
-              checked={enabled}
-              disabled={editingDisabled || !config?.revision}
+              checked={enabled && Boolean(config?.revision)}
+              disabled={editingDisabled}
               onCheckedChange={handleToggleEnabled}
             />
           }
