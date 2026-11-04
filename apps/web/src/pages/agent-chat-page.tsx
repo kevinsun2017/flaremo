@@ -7,6 +7,7 @@ import {
   BotIcon,
   ImageIcon,
   MessageSquarePlusIcon,
+  PanelRightIcon,
   PlusIcon,
   PuzzleIcon,
   RefreshCwIcon,
@@ -43,6 +44,20 @@ export function AgentChatDialog() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [docked, setDocked] = useState(() => {
+    try {
+      return localStorage.getItem("flaremo.agent.docked") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("flaremo.agent.docked", docked ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [docked]);
   const [activeId, setActiveId] = useState<string | null>(null);
   // assistant message id -> memo ids it was grounded on (from the POST reply).
   // Not persisted server-side yet: source persistence needs a worker migration
@@ -144,7 +159,12 @@ export function AgentChatDialog() {
           ref={panelRef}
           role="dialog"
           aria-label={t("agent.title")}
-          className="fixed bottom-20 right-6 z-50 flex h-[560px] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-background shadow-2xl"
+          className={cn(
+            "z-50 flex flex-col overflow-hidden border border-border/60 bg-background shadow-2xl",
+            docked
+              ? "fixed right-0 top-0 h-svh w-[380px] max-w-[calc(100vw-3rem)] rounded-none border-r-0"
+              : "fixed bottom-20 right-6 h-[560px] w-[380px] max-w-[calc(100vw-3rem)] rounded-2xl",
+          )}
         >
           {/* Header */}
           <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
@@ -160,6 +180,15 @@ export function AgentChatDialog() {
               aria-label={t("agent.newConversation")}
             >
               <MessageSquarePlusIcon />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setDocked((v) => !v)}
+              aria-label={t("agent.dockToggle")}
+              title={t("agent.dockToggle")}
+            >
+              <PanelRightIcon />
             </Button>
             <Button
               size="icon-sm"

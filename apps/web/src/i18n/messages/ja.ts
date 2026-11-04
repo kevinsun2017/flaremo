@@ -7,6 +7,7 @@ const messages = {
   "nav.articles": "記事",
   "nav.agent": "エージェント",
   "agent.title": "Agent チャット",
+  "agent.dockToggle": "Dock/float",
   "agent.close": "閉じる",
   "agent.retry": "再試行",
   "agent.disclaimer": "内容は AI が生成したものであり、参考用です",

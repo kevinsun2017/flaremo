@@ -7,6 +7,7 @@ const messages = {
   "nav.articles": "مقالات",
   "nav.agent": "المساعد",
   "agent.title": "محادثة الذكاء الاصطناعي",
+  "agent.dockToggle": "Dock/float",
   "agent.close": "إغلاق",
   "agent.retry": "إعادة المحاولة",
   "agent.disclaimer": "المحتوى مُنتج بواسطة الذكاء الاصطناعي وهو للرجوع إليه فقط",

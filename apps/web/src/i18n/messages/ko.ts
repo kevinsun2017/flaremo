@@ -8,6 +8,7 @@ const messages = {
   "nav.articles": "아티클",
   "nav.agent": "에이전트",
   "agent.title": "Agent 대화",
+  "agent.dockToggle": "Dock/float",
   "agent.close": "닫기",
   "agent.retry": "재시도",
   "agent.disclaimer": "AI가 생성한 내용이며 참고용입니다",

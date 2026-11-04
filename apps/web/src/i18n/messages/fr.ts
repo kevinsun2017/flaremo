@@ -7,6 +7,7 @@ const messages = {
   "nav.articles": "Articles",
   "nav.agent": "Agent",
   "agent.title": "Discussion IA",
+  "agent.dockToggle": "Dock/float",
   "agent.close": "Fermer",
   "agent.retry": "Réessayer",
   "agent.disclaimer": "Contenu généré par l'IA, à titre de référence uniquement",

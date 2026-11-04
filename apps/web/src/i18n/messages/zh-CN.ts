@@ -6,6 +6,7 @@ const messages = {
   "nav.articles": "文章",
   "nav.agent": "Agent 对话",
   "agent.title": "Agent 对话",
+  "agent.dockToggle": "停靠/浮窗切换",
   "agent.close": "关闭",
   "agent.retry": "重试",
   "agent.disclaimer": "当前内容由 AI 生成，仅供参考",

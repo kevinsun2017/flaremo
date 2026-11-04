@@ -7,6 +7,7 @@ const messages = {
   "nav.articles": "Статьи",
   "nav.agent": "Агент",
   "agent.title": "Чат агента",
+  "agent.dockToggle": "Dock/float",
   "agent.close": "Закрыть",
   "agent.retry": "Повторить",
   "agent.disclaimer": "Содержимое создано ИИ и носит справочный характер",
