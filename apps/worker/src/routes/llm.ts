@@ -109,7 +109,10 @@ async function chatCore(
 
   // Primary attempt.
   const primary = await attempt(base);
-  if (primary.ok) return primary.content;
+  if (primary.ok) {
+    console.log(`LLM primary OK: ${base} (model ${resolved.model})`);
+    return primary.content;
+  }
 
   // Fallback only for transient failures (network/timeout, 5xx). Auth
   // failures (401/403) are not retried — switching URLs would not fix a
@@ -121,7 +124,10 @@ async function chatCore(
       `LLM fallback to backup: primary ${base} failed (${primary.status ?? "network"} — ${primary.detail}), trying ${fallbackUrl}`,
     );
     const backup = await attempt(fallbackUrl);
-    if (backup.ok) return backup.content;
+    if (backup.ok) {
+      console.log(`LLM backup OK: ${fallbackUrl} (model ${resolved.model})`);
+      return backup.content;
+    }
     throw new Error(
       `LLM bridge error: primary ${primary.status ?? "network error"} and fallback ${backup.status ?? "network error"} both failed`,
     );
