@@ -48,6 +48,7 @@ export function AgentChatDialog() {
   // Not persisted server-side yet: source persistence needs a worker migration
   // (sources live on the POST response, not in agent_chat_messages).
   const [sources, setSources] = useState<Record<string, string[]>>({});
+  const [awaitingReply, setAwaitingReply] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const conversations = useQuery({
@@ -96,6 +97,26 @@ export function AgentChatDialog() {
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
+
+  // Poll for the assistant reply after an async send (POST returns 202 immediately).
+  useEffect(() => {
+    if (!open || !activeId || !awaitingReply) return;
+    const interval = setInterval(() => {
+      qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId) });
+    }, 1000);
+    const timeout = setTimeout(() => setAwaitingReply(false), 60000);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [open, activeId, awaitingReply, qc]);
+
+  useEffect(() => {
+    if (!awaitingReply) return;
+    const msgs = messages.data?.messages ?? [];
+    const last = msgs[msgs.length - 1];
+    if (last?.role === "assistant") setAwaitingReply(false);
+  }, [messages.data, awaitingReply]);
 
   const startNew = () => {
     setSources({});
@@ -162,11 +183,9 @@ export function AgentChatDialog() {
           <div className="border-t border-border/60 p-3">
             <Composer
               activeId={activeId}
+              onSent={() => setAwaitingReply(true)}
               onCreated={(id) =>
                 qc.invalidateQueries({ queryKey: queryKeys.agent.messages(id) })
-              }
-              onSources={(msgId, ids) =>
-                setSources((prev) => ({ ...prev, [msgId]: ids }))
               }
             />
             <p className="mt-2 text-center text-xs text-muted-foreground">
@@ -285,11 +304,11 @@ export function MessageBubble({
 function Composer({
   activeId,
   onCreated,
-  onSources,
+  onSent,
 }: {
   activeId: string | null;
   onCreated: (id: string) => void;
-  onSources: (messageId: string, sourceIds: string[]) => void;
+  onSent: () => void;
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -299,20 +318,13 @@ function Composer({
   const send = useMutation({
     mutationFn: ({ content, retry }: { content: string; retry?: boolean }) =>
       sendMessage(activeId!, content, { retry }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       setDraft("");
       setSendError(null);
-      if (data.message) {
-        onSources(data.message.id, data.sources);
-      }
-      // 用户消息已发出，无论 LLM 成不成功都刷新列表，避免“消息发不出去”的假象
+      onSent();
+      // 用户消息已发出，立即刷新列表显示用户消息；assistant 由后台生成，轮询获取
       qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId!) });
       onCreated(activeId!);
-      if (data.llmError) {
-        // AI 回复失败：用户消息已落库，只提示 AI 侧失败并可重试
-        setSendError(data.llmError);
-        toast.error(data.llmError);
-      }
     },
     onError: (error: unknown) => {
       const msg = error instanceof ApiError ? error.message : t("agent.sendFailed");

@@ -120,95 +120,86 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
           });
         }
 
-        // Build the message history for the LLM (system + prior turns + this one).
-        const history = await db
-          .select()
-          .from(agentChatMessages)
-          .where(
-            and(
-              eq(agentChatMessages.conversationId, convId),
-              eq(agentChatMessages.userId, user.id),
-            ),
-          )
-          .orderBy(asc(agentChatMessages.createdAt));
-        const llmMessages = history.map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
-
-        // P2 RAG: semantically retrieve relevant memos and attach them as
-        // grounding context. Degrades gracefully when embedding/Vectorize is
-        // unavailable.
-        let sources: string[] = [];
-        let ragContext = "";
-        const provider = createEmbeddingProvider(c.env);
-        const index = createVectorIndex(c.env);
-        if (provider && index) {
+        const runBackground = async () => {
           try {
-            const hits = await semanticSearchMemos(
-              db,
-              user,
-              {
-                provider,
-                index,
-                namespaces: memoSearchNamespaces(c.env, user, undefined),
-              },
-              content,
-              5,
-            );
-            if (hits.length > 0) {
-              const memos = await getSemanticSearchMemos(
-                db,
-                user,
-                hits.map((hit) => hit.id),
-              );
-              sources = memos.map((memo) => memo.id);
-              ragContext =
-                "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
-                memos
-                  .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
-                  .join("\n\n");
+            const history = await db
+              .select()
+              .from(agentChatMessages)
+              .where(
+                and(
+                  eq(agentChatMessages.conversationId, convId),
+                  eq(agentChatMessages.userId, user.id),
+                ),
+              )
+              .orderBy(asc(agentChatMessages.createdAt));
+            const llmMessages = history.map((m) => ({
+              role: m.role,
+              content: m.content,
+            }));
+
+            let ragContext = "";
+            const provider = createEmbeddingProvider(c.env);
+            const index = createVectorIndex(c.env);
+            if (provider && index) {
+              try {
+                const hits = await semanticSearchMemos(
+                  db,
+                  user,
+                  {
+                    provider,
+                    index,
+                    namespaces: memoSearchNamespaces(c.env, user, undefined),
+                  },
+                  content,
+                  5,
+                );
+                if (hits.length > 0) {
+                  const memos = await getSemanticSearchMemos(
+                    db,
+                    user,
+                    hits.map((hit) => hit.id),
+                  );
+                  ragContext =
+                    "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
+                    memos
+                      .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
+                      .join("\n\n");
+                }
+              } catch (ragErr) {
+                console.error("RAG failed:", ragErr);
+              }
             }
-          } catch (ragErr) {
-            // RAG 失败不阻塞对话：只不带来源继续
-            console.error("RAG failed:", ragErr);
+
+            const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${ragContext}`;
+            try {
+              const reply = await chatWithMagpie(c.env, [
+                { role: "system", content: systemPrompt },
+                ...llmMessages,
+              ]);
+              await db.insert(agentChatMessages).values({
+                id: crypto.randomUUID(),
+                conversationId: convId,
+                userId: user.id,
+                role: "assistant",
+                content: reply,
+                createdAt: new Date().toISOString(),
+              });
+            } catch (llmErr) {
+              console.error("LLM failed:", llmErr);
+            }
+          } catch (err) {
+            console.error("agent background failed:", err);
           }
-        }
+        };
 
-        const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${ragContext}`;
-        let assistantMsgId: string | null = null;
-        let reply: string | null = null;
-        let llmError: string | null = null;
         try {
-          reply = await chatWithMagpie(c.env, [
-            { role: "system", content: systemPrompt },
-            ...llmMessages,
-          ]);
-          assistantMsgId = crypto.randomUUID();
-          await db.insert(agentChatMessages).values({
-            id: assistantMsgId,
-            conversationId: convId,
-            userId: user.id,
-            role: "assistant",
-            content: reply,
-            createdAt: new Date().toISOString(),
-          });
-        } catch (llmErr) {
-          // LLM 失败不阻塞用户消息发送：用户消息已落库，AI 回复失败单独提示
-          llmError = llmErr instanceof Error ? llmErr.message : String(llmErr);
-          console.error("LLM failed:", llmErr);
+          (c as any).executionCtx?.waitUntil(runBackground());
+        } catch {
+          // Fallback for environments without executionCtx: run inline (blocks).
+          await runBackground();
         }
 
-        return c.json(
-          {
-            message: assistantMsgId
-              ? { id: assistantMsgId, role: "assistant", content: reply!, createdAt: new Date().toISOString() }
-              : null,
-            sources,
-            llmError,
-          },
-          201,
-        );
+        return c.json({ status: "accepted" }, 202);
       } catch (error) {
         return jsonError(c, error);
       }

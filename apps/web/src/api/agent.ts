@@ -23,7 +23,7 @@ export async function listMessages(conversationId: string) {
 }
 
 export async function sendMessage(conversationId: string, content: string, options: { retry?: boolean } = {}) {
-  return apiRequest<{ message: AgentChatMessage | null; sources: string[]; llmError?: string }>(
+  return apiRequest<{ status: string }>(
     `/api/app/agent/conversations/${encodeURIComponent(conversationId)}/messages`,
     { method: "POST", body: JSON.stringify({ content, ...options }) },
   );
