@@ -304,7 +304,7 @@ index 4cedb31..2d9cb3b 100644
    "agent.newConversation": "新对话",
    "agent.emptyConversations": "还没有对话",
 diff --git a/apps/web/src/pages/agent-chat-page.tsx b/apps/web/src/pages/agent-chat-page.tsx
-index 5c57732..bce5492 100644
+index 5c57732..c8853cf 100644
 --- a/apps/web/src/pages/agent-chat-page.tsx
 +++ b/apps/web/src/pages/agent-chat-page.tsx
 @@ -10,7 +10,6 @@ import {
@@ -315,17 +315,31 @@ index 5c57732..bce5492 100644
    RefreshCwIcon,
    SparklesIcon,
    XIcon,
-@@ -24,7 +23,9 @@ import {
+@@ -24,7 +23,10 @@ import {
    sendMessage,
    type AgentChatMessage,
  } from "@/api";
 +import type { AgentSkillId } from "@flaremo/contracts";
  import { ApiError } from "@/api/client";
 +import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
++import { LazyMemoContent } from "@/components/lazy-memo-content";
  import { Button } from "@/components/ui/button";
  import {
    DropdownMenu,
-@@ -445,8 +446,15 @@ function Composer({
+@@ -406,7 +408,11 @@ export function MessageBubble({
+             : "bg-card/50",
+         )}
+       >
+-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
++        {isUser ? (
++          <p className="whitespace-pre-wrap break-words">{message.content}</p>
++        ) : (
++          <LazyMemoContent className="break-words text-sm leading-6" content={message.content} />
++        )}
+         {!isUser && sources && sources.length > 0 && (
+           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
+             <span className="mr-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+@@ -445,8 +451,15 @@ function Composer({
    const [sendError, setSendError] = useState<string | null>(null);
  
    const send = useMutation({
@@ -343,7 +357,7 @@ index 5c57732..bce5492 100644
      onMutate: async ({ content, retry }) => {
        await qc.cancelQueries({
          queryKey: queryKeys.agent.messages(activeId!),
-@@ -536,8 +544,8 @@ function Composer({
+@@ -536,8 +549,8 @@ function Composer({
          className="min-h-9 resize-none border-0 bg-transparent px-3 pt-2.5 shadow-none focus-visible:ring-0"
          autoFocus
        />
@@ -354,7 +368,7 @@ index 5c57732..bce5492 100644
        <div className="flex items-center gap-1 px-1.5 pb-1.5">
          <Button
            size="icon-sm"
-@@ -548,15 +556,17 @@ function Composer({
+@@ -548,15 +561,17 @@ function Composer({
          >
            <AtSignIcon className="size-4" strokeWidth={1.5} />
          </Button>

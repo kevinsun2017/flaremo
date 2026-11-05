@@ -26,6 +26,7 @@ import {
 import type { AgentSkillId } from "@flaremo/contracts";
 import { ApiError } from "@/api/client";
 import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
+import { LazyMemoContent } from "@/components/lazy-memo-content";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -407,7 +408,11 @@ export function MessageBubble({
             : "bg-card/50",
         )}
       >
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        ) : (
+          <LazyMemoContent className="break-words text-sm leading-6" content={message.content} />
+        )}
         {!isUser && sources && sources.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
             <span className="mr-0.5 flex items-center gap-1 text-xs text-muted-foreground">
