@@ -1,4 +1,5 @@
 export * from "./articles";
+export * from "./agent-skills";
 export * from "./attachment-refs";
 export * from "./branding";
 export * from "./calendar";

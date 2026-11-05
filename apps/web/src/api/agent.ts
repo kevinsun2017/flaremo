@@ -1,4 +1,5 @@
 import { apiRequest } from "./client";
+import type { AgentSkillId } from "@flaremo/contracts";
 import type { AgentChatMessage, AgentConversation } from "./types";
 
 /** Conversation list, newest first. */
@@ -22,7 +23,11 @@ export async function listMessages(conversationId: string) {
   );
 }
 
-export async function sendMessage(conversationId: string, content: string, options: { retry?: boolean } = {}) {
+export async function sendMessage(
+  conversationId: string,
+  content: string,
+  options: { retry?: boolean; skill?: AgentSkillId } = {},
+) {
   return apiRequest<{ status: string }>(
     `/api/app/agent/conversations/${encodeURIComponent(conversationId)}/messages`,
     { method: "POST", body: JSON.stringify({ content, ...options }) },

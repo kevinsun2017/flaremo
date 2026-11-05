@@ -73,9 +73,27 @@ jobs:
             --exclude=wrangler.jsonc \
             --exclude=.gitattributes \
             --exclude=.upstream-tag \
+            --exclude=patches \
             --exclude=.github \
             /tmp/up/ ./
           echo "$TAG" > .upstream-tag
+
+          # ── 本地补丁必须重新贴回 ──────────────────────────────
+          # 快照替换会把上游已有文件恢复成原样，因此本仓库对上游文件的改动
+          # 一律以 patches/*.patch 保存。打不上就失败：宁可红着，也不要静默丢掉功能。
+          if compgen -G "patches/*.patch" > /dev/null; then
+            if git apply --check patches/*.patch 2>/dev/null; then
+              git apply patches/*.patch
+              echo "已重新贴回 $(ls patches/*.patch | wc -l | tr -d ' ') 个本地补丁"
+            else
+              echo "::error::patches/ 里的本地补丁与 ${TAG} 冲突，需人工重做（步骤见 patches/README.md）。本次同步不可合并。"
+              for f in patches/*.patch; do
+                echo "  - $f："
+                git apply --check "$f" 2>&1 | sed 's/^/      /'
+              done
+              exit 1
+            fi
+          fi
 
       - name: 开同步 PR
         if: steps.tag.outputs.skip != 'true'

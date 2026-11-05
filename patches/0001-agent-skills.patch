@@ -1,0 +1,712 @@
+From f4901d12806cb425c4160c8cb154c1c6140e380c Mon Sep 17 00:00:00 2001
+From: kevinsun2017 <muer322@gmail.com>
+Date: Thu, 5 Nov 2026 11:54:14 +0800
+Subject: [PATCH] feat(agent): flomo-style skills menu (7 skills, system-prompt
+ injection, deterministic recall)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- contracts: AGENT_SKILLS catalog (id / retrieval mode / prompt / ragHint) as single source
+- worker: chat messages accept {skill}; skill instructions injected into system prompt;
+  RAG query comes from the skill topic instead of the raw message, so long prompts no
+  longer pollute recall; same-day-history and older-random reuse domain functions
+  (listDailyReviewMemos / getRandomMemo) — no SQL; empty recall says so plainly
+- web: AgentSkillsMenu on the previously dead skills button; message body carries only
+  the skill name; skill id travels as a request field
+- i18n: 14 keys across all 8 locales (parity test green)
+- sync: re-apply patches/*.patch after snapshot; fail loudly on conflict
+
+Refs: notes/flaremo-agent-skills-plan-20261105.md (定论 2026-11-05)
+---
+ .github/workflows/upstream-sync.yml           | 18 ++++
+ apps/web/src/api/agent.ts                     |  7 +-
+ apps/web/src/components/agent-skills-menu.tsx | 76 ++++++++++++++++
+ apps/web/src/i18n/messages/ar.ts              | 14 +++
+ apps/web/src/i18n/messages/en-US.ts           | 14 +++
+ apps/web/src/i18n/messages/es.ts              | 14 +++
+ apps/web/src/i18n/messages/fr.ts              | 14 +++
+ apps/web/src/i18n/messages/ja.ts              | 14 +++
+ apps/web/src/i18n/messages/ko.ts              | 14 +++
+ apps/web/src/i18n/messages/ru.ts              | 14 +++
+ apps/web/src/i18n/messages/zh-CN.ts           | 14 +++
+ apps/web/src/pages/agent-chat-page.tsx        | 38 +++++---
+ apps/worker/src/routes/app/agent.ts           | 63 ++++++++++---
+ packages/contracts/src/agent-skills.ts        | 89 +++++++++++++++++++
+ packages/contracts/src/index.ts               |  1 +
+ patches/README.md                             | 22 +++++
+ 16 files changed, 398 insertions(+), 28 deletions(-)
+ create mode 100644 apps/web/src/components/agent-skills-menu.tsx
+ create mode 100644 packages/contracts/src/agent-skills.ts
+ create mode 100644 patches/README.md
+
+diff --git a/.github/workflows/upstream-sync.yml b/.github/workflows/upstream-sync.yml
+index cd2f699..d28327a 100644
+--- a/.github/workflows/upstream-sync.yml
++++ b/.github/workflows/upstream-sync.yml
+@@ -73,10 +73,28 @@ jobs:
+             --exclude=wrangler.jsonc \
+             --exclude=.gitattributes \
+             --exclude=.upstream-tag \
++            --exclude=patches \
+             --exclude=.github \
+             /tmp/up/ ./
+           echo "$TAG" > .upstream-tag
+ 
++          # ── 本地补丁必须重新贴回 ──────────────────────────────
++          # 快照替换会把上游已有文件恢复成原样，因此本仓库对上游文件的改动
++          # 一律以 patches/*.patch 保存。打不上就失败：宁可红着，也不要静默丢掉功能。
++          if compgen -G "patches/*.patch" > /dev/null; then
++            if git apply --check patches/*.patch 2>/dev/null; then
++              git apply patches/*.patch
++              echo "已重新贴回 $(ls patches/*.patch | wc -l | tr -d ' ') 个本地补丁"
++            else
++              echo "::error::patches/ 里的本地补丁与 ${TAG} 冲突，需人工重做（步骤见 patches/README.md）。本次同步不可合并。"
++              for f in patches/*.patch; do
++                echo "  - $f："
++                git apply --check "$f" 2>&1 | sed 's/^/      /'
++              done
++              exit 1
++            fi
++          fi
++
+       - name: 开同步 PR
+         if: steps.tag.outputs.skip != 'true'
+         env:
+diff --git a/apps/web/src/api/agent.ts b/apps/web/src/api/agent.ts
+index 2471083..5f0f8bb 100644
+--- a/apps/web/src/api/agent.ts
++++ b/apps/web/src/api/agent.ts
+@@ -1,4 +1,5 @@
+ import { apiRequest } from "./client";
++import type { AgentSkillId } from "@flaremo/contracts";
+ import type { AgentChatMessage, AgentConversation } from "./types";
+ 
+ /** Conversation list, newest first. */
+@@ -22,7 +23,11 @@ export async function listMessages(conversationId: string) {
+   );
+ }
+ 
+-export async function sendMessage(conversationId: string, content: string, options: { retry?: boolean } = {}) {
++export async function sendMessage(
++  conversationId: string,
++  content: string,
++  options: { retry?: boolean; skill?: AgentSkillId } = {},
++) {
+   return apiRequest<{ status: string }>(
+     `/api/app/agent/conversations/${encodeURIComponent(conversationId)}/messages`,
+     { method: "POST", body: JSON.stringify({ content, ...options }) },
+diff --git a/apps/web/src/components/agent-skills-menu.tsx b/apps/web/src/components/agent-skills-menu.tsx
+new file mode 100644
+index 0000000..17ea177
+--- /dev/null
++++ b/apps/web/src/components/agent-skills-menu.tsx
+@@ -0,0 +1,76 @@
++import { AGENT_SKILL_LIST, type AgentSkill, type AgentSkillId } from "@flaremo/contracts";
++import { PuzzleIcon } from "lucide-react";
++import { useI18n } from "@/i18n";
++import type { TranslationKey } from "@/i18n/key";
++import { Button } from "@/components/ui/button";
++import {
++  DropdownMenu,
++  DropdownMenuContent,
++  DropdownMenuItem,
++  DropdownMenuLabel,
++  DropdownMenuSeparator,
++  DropdownMenuTrigger,
++} from "@/components/ui/dropdown-menu";
++
++/**
++ * 技能的界面文案映射。放在 web 侧而非 contracts：服务端只关心 id、取数方式与注入
++ * 模型的指令，locale 目录才是 UI 文案的真源。satisfies 保证漏翻译会编译失败。
++ */
++export const AGENT_SKILL_KEYS = {
++  "daily-insight": { label: "agent.skill.dailyInsight.label", desc: "agent.skill.dailyInsight.desc" },
++  "behavior-pattern": { label: "agent.skill.behaviorPattern.label", desc: "agent.skill.behaviorPattern.desc" },
++  reframe: { label: "agent.skill.reframe.label", desc: "agent.skill.reframe.desc" },
++  "yesterday-dream": { label: "agent.skill.yesterdayDream.label", desc: "agent.skill.yesterdayDream.desc" },
++  "book-mirror": { label: "agent.skill.bookMirror.label", desc: "agent.skill.bookMirror.desc" },
++  "echo-of-then": { label: "agent.skill.echoOfThen.label", desc: "agent.skill.echoOfThen.desc" },
++  "on-this-day": { label: "agent.skill.onThisDay.label", desc: "agent.skill.onThisDay.desc" },
++} as const satisfies Record<AgentSkillId, { label: TranslationKey; desc: TranslationKey }>;
++
++/**
++ * 「技能」菜单，对齐 flomo Agent。选中后：用户消息只放技能名（短，不污染 RAG 召回），
++ * 技能 id 随请求交给后端，由后端把指令注入 system prompt。
++ */
++export function AgentSkillsMenu({
++  onSelect,
++  disabled,
++}: {
++  onSelect: (skill: AgentSkill) => void;
++  disabled?: boolean;
++}) {
++  const { t } = useI18n();
++  return (
++    <DropdownMenu>
++      <DropdownMenuTrigger
++        render={
++          <Button
++            aria-label={t("agent.skills")}
++            className="text-muted-foreground hover:text-foreground"
++            disabled={disabled}
++            size="icon-sm"
++            title={t("agent.skills")}
++            type="button"
++            variant="ghost"
++          />
++        }
++      >
++        <PuzzleIcon className="size-4" strokeWidth={1.5} />
++      </DropdownMenuTrigger>
++      <DropdownMenuContent align="start" className="w-72">
++        <DropdownMenuLabel>{t("agent.skills")}</DropdownMenuLabel>
++        <DropdownMenuSeparator />
++        {AGENT_SKILL_LIST.map((skill) => (
++          <DropdownMenuItem
++            key={skill.id}
++            className="flex-col items-start gap-0.5 py-2"
++            onClick={() => onSelect(skill)}
++          >
++            <span>{t(AGENT_SKILL_KEYS[skill.id].label)}</span>
++            <span className="text-xs leading-snug text-muted-foreground">
++              {t(AGENT_SKILL_KEYS[skill.id].desc)}
++            </span>
++          </DropdownMenuItem>
++        ))}
++      </DropdownMenuContent>
++    </DropdownMenu>
++  );
++}
+diff --git a/apps/web/src/i18n/messages/ar.ts b/apps/web/src/i18n/messages/ar.ts
+index 7790c0f..188ba6f 100644
+--- a/apps/web/src/i18n/messages/ar.ts
++++ b/apps/web/src/i18n/messages/ar.ts
+@@ -19,6 +19,20 @@ const messages = {
+   "agent.disclaimer": "المحتوى مُنتج بواسطة الذكاء الاصطناعي وهو للرجوع إليه فقط",
+   "agent.mention": "@ إشارة",
+   "agent.skills": "المهارات",
++  "agent.skill.dailyInsight.label": "معرفة اليوم",
++  "agent.skill.dailyInsight.desc": "من نقطة كتبتها، توسّع فكرة جديدة لم تكتبها بعد",
++  "agent.skill.behaviorPattern.label": "نمط السلوك",
++  "agent.skill.behaviorPattern.desc": "كشف ردّ فعل افتراضي تكرّره دون أن تلاحظ",
++  "agent.skill.reframe.label": "إعادة تأطير",
++  "agent.skill.reframe.desc": "تحويل ما يشغلك إلى جملة واحدة بلا وعظ",
++  "agent.skill.yesterdayDream.label": "حلم الأمس",
++  "agent.skill.yesterdayDream.desc": "إبراز فضول من ملاحظاتك لم تُجِب عنه بعد",
++  "agent.skill.bookMirror.label": "مرآة الكتاب",
++  "agent.skill.bookMirror.desc": "كتاب تريد قراءته عبر ملاحظاتك أنت",
++  "agent.skill.echoOfThen.label": "صدى الماضي",
++  "agent.skill.echoOfThen.desc": "أين تتناقض ملاحظتان قديمتان، ويترك لك سؤالًا حقيقيًا",
++  "agent.skill.onThisDay.label": "مثل هذا اليوم",
++  "agent.skill.onThisDay.desc": "ماذا كتبت في هذا اليوم بالسنوات الماضية مقارنةً بالآن",
+   "agent.attachImage": "صورة",
+   "agent.newConversation": "محادثة جديدة",
+   "agent.emptyConversations": "لا توجد محادثات بعد",
+diff --git a/apps/web/src/i18n/messages/en-US.ts b/apps/web/src/i18n/messages/en-US.ts
+index 9484da5..a281b15 100644
+--- a/apps/web/src/i18n/messages/en-US.ts
++++ b/apps/web/src/i18n/messages/en-US.ts
+@@ -20,6 +20,20 @@ const messages = {
+   "agent.disclaimer": "Content is AI-generated and for reference only",
+   "agent.mention": "@ mention",
+   "agent.skills": "Skills",
++  "agent.skill.dailyInsight.label": "Daily Insight",
++  "agent.skill.dailyInsight.desc": "Take one point you wrote and extend it into something you haven't recorded yet",
++  "agent.skill.behaviorPattern.label": "Behavior Pattern",
++  "agent.skill.behaviorPattern.desc": "Reveal a default reaction you keep repeating without noticing",
++  "agent.skill.reframe.label": "Reframe",
++  "agent.skill.reframe.desc": "Turn what's been on your mind into one reframing that isn't motivational fluff",
++  "agent.skill.yesterdayDream.label": "Yesterday's Dream",
++  "agent.skill.yesterdayDream.desc": "Surface a curiosity from your own notes you never resolved",
++  "agent.skill.bookMirror.label": "Book Mirror",
++  "agent.skill.bookMirror.desc": "Use your own notes to mirror the book you mean to read",
++  "agent.skill.echoOfThen.label": "Echo of Then",
++  "agent.skill.echoOfThen.desc": "Find where two old notes disagree, and leave you one real question",
++  "agent.skill.onThisDay.label": "On This Day",
++  "agent.skill.onThisDay.desc": "What you wrote on this day in past years, set against now",
+   "agent.attachImage": "Image",
+   "agent.newConversation": "New chat",
+   "agent.emptyConversations": "No conversations yet",
+diff --git a/apps/web/src/i18n/messages/es.ts b/apps/web/src/i18n/messages/es.ts
+index 2dcc2ea..43dcae3 100644
+--- a/apps/web/src/i18n/messages/es.ts
++++ b/apps/web/src/i18n/messages/es.ts
+@@ -20,6 +20,20 @@ const messages = {
+   "agent.disclaimer": "El contenido lo genera la IA y es solo de referencia",
+   "agent.mention": "@ mencionar",
+   "agent.skills": "Habilidades",
++  "agent.skill.dailyInsight.label": "Idea del día",
++  "agent.skill.dailyInsight.desc": "Toma un punto que escribiste y llévalo a algo que aún no has anotado",
++  "agent.skill.behaviorPattern.label": "Patrón de conducta",
++  "agent.skill.behaviorPattern.desc": "Muestra una reacción por defecto que repites sin notarlo",
++  "agent.skill.reframe.label": "Reencuadre",
++  "agent.skill.reframe.desc": "Convierte lo que te ocupa en una frase que no suena a autoayuda",
++  "agent.skill.yesterdayDream.label": "Sueño de ayer",
++  "agent.skill.yesterdayDream.desc": "Saca una curiosidad de tus notas que nunca resolviste",
++  "agent.skill.bookMirror.label": "Espejo de libro",
++  "agent.skill.bookMirror.desc": "Usa tus notas para reflejar el libro que quieres leer",
++  "agent.skill.echoOfThen.label": "Eco de entonces",
++  "agent.skill.echoOfThen.desc": "Busca dónde dos notas antiguas se contradicen y deja una pregunta real",
++  "agent.skill.onThisDay.label": "Este día entonces",
++  "agent.skill.onThisDay.desc": "Lo que escribiste este día en años pasados, frente a hoy",
+   "agent.attachImage": "Imagen",
+   "agent.newConversation": "Nueva conversación",
+   "agent.emptyConversations": "Aún no hay conversaciones",
+diff --git a/apps/web/src/i18n/messages/fr.ts b/apps/web/src/i18n/messages/fr.ts
+index 654d017..87156e1 100644
+--- a/apps/web/src/i18n/messages/fr.ts
++++ b/apps/web/src/i18n/messages/fr.ts
+@@ -19,6 +19,20 @@ const messages = {
+   "agent.disclaimer": "Contenu généré par l'IA, à titre de référence uniquement",
+   "agent.mention": "@ mention",
+   "agent.skills": "Compétences",
++  "agent.skill.dailyInsight.label": "Savoir du jour",
++  "agent.skill.dailyInsight.desc": "Prolonger un point déjà noté vers quelque chose que vous n'avez pas encore écrit",
++  "agent.skill.behaviorPattern.label": "Schéma de comportement",
++  "agent.skill.behaviorPattern.desc": "Révéler une réaction par défaut que vous répétez sans la voir",
++  "agent.skill.reframe.label": "Recadrage",
++  "agent.skill.reframe.desc": "Transformer ce qui vous occupe en une reformulation sans mièvrerie",
++  "agent.skill.yesterdayDream.label": "Rêve d'hier",
++  "agent.skill.yesterdayDream.desc": "Faire remonter une curiosité de vos notes jamais résolue",
++  "agent.skill.bookMirror.label": "Miroir de livre",
++  "agent.skill.bookMirror.desc": "Éclairer le livre que vous voulez lire avec vos propres notes",
++  "agent.skill.echoOfThen.label": "Écho d'alors",
++  "agent.skill.echoOfThen.desc": "Chercher où deux notes anciennes se contredisent, laisser une vraie question",
++  "agent.skill.onThisDay.label": "Ce jour-là",
++  "agent.skill.onThisDay.desc": "Ce que vous écriviez ce jour les années passées, face à aujourd'hui",
+   "agent.attachImage": "Image",
+   "agent.newConversation": "Nouvelle conversation",
+   "agent.emptyConversations": "Aucune conversation pour l'instant",
+diff --git a/apps/web/src/i18n/messages/ja.ts b/apps/web/src/i18n/messages/ja.ts
+index f681cf6..2f76189 100644
+--- a/apps/web/src/i18n/messages/ja.ts
++++ b/apps/web/src/i18n/messages/ja.ts
+@@ -19,6 +19,20 @@ const messages = {
+   "agent.disclaimer": "内容は AI が生成したものであり、参考用です",
+   "agent.mention": "@ メンション",
+   "agent.skills": "スキル",
++  "agent.skill.dailyInsight.label": "今日の新知",
++  "agent.skill.dailyInsight.desc": "書いたある一点から、まだ記録していない新知を一条伸ばす",
++  "agent.skill.behaviorPattern.label": "行動の洞察",
++  "agent.skill.behaviorPattern.desc": "繰り返しているのに気づいていない既定反応を映す",
++  "agent.skill.reframe.label": "幸福の薬",
++  "agent.skill.reframe.desc": "最近考えていることを、安易な励ましではない一言に再定義する",
++  "agent.skill.yesterdayDream.label": "昨日の夢",
++  "agent.skill.yesterdayDream.desc": "あなたの記録から解けていない疑問をひとつ拾う",
++  "agent.skill.bookMirror.label": "書の鏡",
++  "agent.skill.bookMirror.desc": "読みたい本を、あなたの記録で照らす",
++  "agent.skill.echoOfThen.label": "昨日のエコー",
++  "agent.skill.echoOfThen.desc": "古い二つの記録の食い違いを探し、本物の問いをひとつ残す",
++  "agent.skill.onThisDay.label": "あの日の今日",
++  "agent.skill.onThisDay.desc": "例年の今日に書いたことを今と比べる",
+   "agent.attachImage": "画像",
+   "agent.newConversation": "新しい会話",
+   "agent.emptyConversations": "会話はまだありません",
+diff --git a/apps/web/src/i18n/messages/ko.ts b/apps/web/src/i18n/messages/ko.ts
+index d7987ba..c708ae7 100644
+--- a/apps/web/src/i18n/messages/ko.ts
++++ b/apps/web/src/i18n/messages/ko.ts
+@@ -20,6 +20,20 @@ const messages = {
+   "agent.disclaimer": "AI가 생성한 내용이며 참고용입니다",
+   "agent.mention": "@ 멘션",
+   "agent.skills": "스킬",
++  "agent.skill.dailyInsight.label": "오늘의 신지",
++  "agent.skill.dailyInsight.desc": "적어 둔 한 지점에서 아직 적지 않은 새 지식을 하나 뻗어냅니다",
++  "agent.skill.behaviorPattern.label": "행동 통찰",
++  "agent.skill.behaviorPattern.desc": "반복하면서도 알아채지 못한 기본 반응을 비춥니다",
++  "agent.skill.reframe.label": "행복의 약",
++  "agent.skill.reframe.desc": "요즘 마음속에 있는 것을 흔한 위로 아닌 한 문장으로 다시 묶습니다",
++  "agent.skill.yesterdayDream.label": "어제의 꿈",
++  "agent.skill.yesterdayDream.desc": "기록에서 아직 풀리지 않은 호기심을 하나 꺼냅니다",
++  "agent.skill.bookMirror.label": "책의 거울",
++  "agent.skill.bookMirror.desc": "읽고 싶은 책을 당신의 기록으로 비춥니다",
++  "agent.skill.echoOfThen.label": "그때의 메아리",
++  "agent.skill.echoOfThen.desc": "오래된 두 기록이 어긋나는 곳을 찾아 진짜 질문 하나를 남깁니다",
++  "agent.skill.onThisDay.label": "그 해 오늘",
++  "agent.skill.onThisDay.desc": "예년 오늘 적었던 것을 지금의 당신과 견줍니다",
+   "agent.attachImage": "이미지",
+   "agent.newConversation": "새 대화",
+   "agent.emptyConversations": "아직 대화가 없습니다",
+diff --git a/apps/web/src/i18n/messages/ru.ts b/apps/web/src/i18n/messages/ru.ts
+index 9e5da78..99ac5be 100644
+--- a/apps/web/src/i18n/messages/ru.ts
++++ b/apps/web/src/i18n/messages/ru.ts
+@@ -19,6 +19,20 @@ const messages = {
+   "agent.disclaimer": "Содержимое создано ИИ и носит справочный характер",
+   "agent.mention": "@ упоминание",
+   "agent.skills": "Навыки",
++  "agent.skill.dailyInsight.label": "Мысль дня",
++  "agent.skill.dailyInsight.desc": "Взять одну вашу запись и развернуть её в новое, ещё не записанное",
++  "agent.skill.behaviorPattern.label": "Паттерн поведения",
++  "agent.skill.behaviorPattern.desc": "Показать привычную реакцию, которую вы повторяете, не замечая",
++  "agent.skill.reframe.label": "Переформулирование",
++  "agent.skill.reframe.desc": "Превратить то, что вас занимает, в фразу без сюсюканья",
++  "agent.skill.yesterdayDream.label": "Вчерашний сон",
++  "agent.skill.yesterdayDream.desc": "Вытащить из ваших записей недоигранную мысль",
++  "agent.skill.bookMirror.label": "Зеркало книги",
++  "agent.skill.bookMirror.desc": "Показать желаемую книгу через ваши собственные записи",
++  "agent.skill.echoOfThen.label": "Эхо прежнего",
++  "agent.skill.echoOfThen.desc": "Найти, где две старые записи противоречат, и оставить настоящий вопрос",
++  "agent.skill.onThisDay.label": "Этот день тогда",
++  "agent.skill.onThisDay.desc": "Что вы писали в этот год в прошлые годы — в сравнении с сейчас",
+   "agent.attachImage": "Картинка",
+   "agent.newConversation": "Новый чат",
+   "agent.emptyConversations": "Пока нет бесед",
+diff --git a/apps/web/src/i18n/messages/zh-CN.ts b/apps/web/src/i18n/messages/zh-CN.ts
+index 4cedb31..2d9cb3b 100644
+--- a/apps/web/src/i18n/messages/zh-CN.ts
++++ b/apps/web/src/i18n/messages/zh-CN.ts
+@@ -18,6 +18,20 @@ const messages = {
+   "agent.disclaimer": "当前内容由 AI 生成，仅供参考",
+   "agent.mention": "@ 提及",
+   "agent.skills": "技能",
++  "agent.skill.dailyInsight.label": "每日新知",
++  "agent.skill.dailyInsight.desc": "从你写过的某个点，延伸一条你还没记过的新知识",
++  "agent.skill.behaviorPattern.label": "行为洞察",
++  "agent.skill.behaviorPattern.desc": "照出你反复出现、却没察觉的默认动作",
++  "agent.skill.reframe.label": "幸福灵药",
++  "agent.skill.reframe.desc": "把最近在想的事，炼成一句不鸡汤的重新框定",
++  "agent.skill.yesterdayDream.label": "昨天的梦",
++  "agent.skill.yesterdayDream.desc": "从你的记录里冒出一个你还没解开的念头",
++  "agent.skill.bookMirror.label": "书镜",
++  "agent.skill.bookMirror.desc": "用你自己的笔记，照一照你想读的那本书",
++  "agent.skill.echoOfThen.label": "昨日回声",
++  "agent.skill.echoOfThen.desc": "找两条旧笔记对不上的地方，留给你一个真问题",
++  "agent.skill.onThisDay.label": "那年今日",
++  "agent.skill.onThisDay.desc": "往年今天写过什么，和现在的你对照",
+   "agent.attachImage": "上传图片",
+   "agent.newConversation": "新对话",
+   "agent.emptyConversations": "还没有对话",
+diff --git a/apps/web/src/pages/agent-chat-page.tsx b/apps/web/src/pages/agent-chat-page.tsx
+index 5c57732..bce5492 100644
+--- a/apps/web/src/pages/agent-chat-page.tsx
++++ b/apps/web/src/pages/agent-chat-page.tsx
+@@ -10,7 +10,6 @@ import {
+   ImageIcon,
+   PanelRightIcon,
+   PlusIcon,
+-  PuzzleIcon,
+   RefreshCwIcon,
+   SparklesIcon,
+   XIcon,
+@@ -24,7 +23,9 @@ import {
+   sendMessage,
+   type AgentChatMessage,
+ } from "@/api";
++import type { AgentSkillId } from "@flaremo/contracts";
+ import { ApiError } from "@/api/client";
++import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
+ import { Button } from "@/components/ui/button";
+ import {
+   DropdownMenu,
+@@ -445,8 +446,15 @@ function Composer({
+   const [sendError, setSendError] = useState<string | null>(null);
+ 
+   const send = useMutation({
+-    mutationFn: ({ content, retry }: { content: string; retry?: boolean }) =>
+-      sendMessage(activeId!, content, { retry }),
++    mutationFn: ({
++      content,
++      retry,
++      skill,
++    }: {
++      content: string;
++      retry?: boolean;
++      skill?: AgentSkillId;
++    }) => sendMessage(activeId!, content, { retry, skill }),
+     onMutate: async ({ content, retry }) => {
+       await qc.cancelQueries({
+         queryKey: queryKeys.agent.messages(activeId!),
+@@ -536,8 +544,8 @@ function Composer({
+         className="min-h-9 resize-none border-0 bg-transparent px-3 pt-2.5 shadow-none focus-visible:ring-0"
+         autoFocus
+       />
+-      {/* Toolbar row: @mention, skills, image (flomo-style); image/skills are
+-          P4 scaffolds — submitting is still text-only. */}
++      {/* Toolbar row: @mention, skills, image (flomo-style). Skills are live
++          (the menu sends the skill name plus its id); image attach is a P4 scaffold. */}
+       <div className="flex items-center gap-1 px-1.5 pb-1.5">
+         <Button
+           size="icon-sm"
+@@ -548,15 +556,17 @@ function Composer({
+         >
+           <AtSignIcon className="size-4" strokeWidth={1.5} />
+         </Button>
+-        <Button
+-          size="icon-sm"
+-          variant="ghost"
+-          className="text-muted-foreground hover:text-foreground"
+-          aria-label={t("agent.skills")}
+-          title={t("agent.skills")}
+-        >
+-          <PuzzleIcon className="size-4" strokeWidth={1.5} />
+-        </Button>
++        <AgentSkillsMenu
++          disabled={send.isPending}
++          onSelect={(skill) => {
++            setSendError(null);
++            send.mutate({
++              content: t(AGENT_SKILL_KEYS[skill.id].label),
++              retry: false,
++              skill: skill.id,
++            });
++          }}
++        />
+         <Button
+           size="icon-sm"
+           variant="ghost"
+diff --git a/apps/worker/src/routes/app/agent.ts b/apps/worker/src/routes/app/agent.ts
+index c4ef16f..196c119 100644
+--- a/apps/worker/src/routes/app/agent.ts
++++ b/apps/worker/src/routes/app/agent.ts
+@@ -1,10 +1,11 @@
+ import { agentChatMessages, agentConversations } from "@flaremo/db";
+-import { getSemanticSearchMemos, semanticSearchMemos } from "@flaremo/domain";
++import { getSemanticSearchMemos, getRandomMemo, listDailyReviewMemos, semanticSearchMemos } from "@flaremo/domain";
+ import { asc, desc, eq, and } from "drizzle-orm";
+ import type { Hono } from "hono";
+ import { z } from "zod";
+ import { getRequestContext, type HonoBindings } from "../../context";
+ import { createEmbeddingProvider, createVectorIndex, memoSearchNamespaces } from "../../embedding";
++import { AGENT_SKILLS, isAgentSkillId } from "@flaremo/contracts";
+ import { jsonError } from "../../http";
+ import { zValidator } from "../../validated";
+ import { chatWithAgentModel } from "../llm";
+@@ -16,6 +17,7 @@ const createConversationSchema = z.object({
+ const chatMessageSchema = z.object({
+   content: z.string().trim().min(1).max(8_000),
+   retry: z.boolean().optional(),
++  skill: z.string().trim().max(64).optional(),
+ });
+ 
+ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+@@ -89,7 +91,12 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+       const { db, user } = await getRequestContext(c);
+       const convId = c.req.param("id");
+ 
+-        const { content, retry } = c.req.valid("json");
++        const { content, retry, skill: skillRaw } = c.req.valid("json");
++        if (skillRaw !== undefined && !isAgentSkillId(skillRaw)) {
++          return c.json({ error: { message: "unknown agent skill" } }, 400);
++        }
++        // 技能指令注入 system prompt；RAG 检索词单独给，避免长指令污染召回。
++        const skill = isAgentSkillId(skillRaw) ? AGENT_SKILLS[skillRaw] : undefined;
+ 
+         // Confirm the conversation belongs to the caller (owner check).
+         const conv = await db
+@@ -145,10 +152,34 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+             }));
+ 
+             let ragContext = "";
++            const contextMemos: { content: string }[] = [];
+             const provider = createEmbeddingProvider(c.env);
+             const index = createVectorIndex(c.env);
+-            if (provider && index) {
+-              try {
++            const mode = skill?.retrieval ?? "semantic";
++            try {
++              if (mode === "same-day-history") {
++                // 那年今日：复用每日回顾的取数（按 month-day 匹配往年）
++                const today = new Date();
++                const monthDay = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
++                for (let back = 1; back <= 5 && contextMemos.length < 5; back += 1) {
++                  const rows = await listDailyReviewMemos(db, user, {
++                    date: `${today.getFullYear() - back}-${monthDay}`,
++                  });
++                  for (const row of rows) if (row.content) contextMemos.push({ content: row.content });
++                }
++              } else if (mode === "older-random") {
++                // 昨日回声：随机取几条旧记录，交给模型找真实张力
++                const pickedIds: string[] = [];
++                for (let i = 0; i < 3; i += 1) {
++                  const picked = await getRandomMemo(db, user, pickedIds);
++                  if (!picked?.content) break;
++                  pickedIds.push(picked.id);
++                  contextMemos.push({ content: picked.content });
++                }
++              } else if (mode === "none") {
++                // 显式不取数
++              } else if (provider && index) {
++                const ragQuery = skill?.ragHint?.trim() || content;
+                 const hits = await semanticSearchMemos(
+                   db,
+                   user,
+@@ -157,7 +188,7 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+                     index,
+                     namespaces: memoSearchNamespaces(c.env, user, undefined),
+                   },
+-                  content,
++                  ragQuery,
+                   5,
+                 );
+                 if (hits.length > 0) {
+@@ -166,18 +197,24 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+                     user,
+                     hits.map((hit) => hit.id),
+                   );
+-                  ragContext =
+-                    "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
+-                    memos
+-                      .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
+-                      .join("\n\n");
++                  for (const memo of memos) if (memo.content) contextMemos.push({ content: memo.content });
+                 }
+-              } catch (ragErr) {
+-                console.error("RAG failed:", ragErr);
+               }
++            } catch (ragErr) {
++              console.error("RAG failed:", ragErr);
++            }
++            if (contextMemos.length > 0) {
++              ragContext =
++                "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
++                contextMemos
++                  .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
++                  .join("\n\n");
++            } else if (mode === "same-day-history" || mode === "older-random") {
++              // 空状态诚实告知，逼模型走护栏文案而不是编造
++              ragContext = "\n\n（本次没有取到任何可引用的历史记录。）";
+             }
+ 
+-            const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${ragContext}`;
++            const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${skill ? `\n\n${skill.prompt}` : ""}${ragContext}`;
+             try {
+               const reply = await chatWithAgentModel(c.env, db, [
+                 { role: "system", content: systemPrompt },
+diff --git a/packages/contracts/src/agent-skills.ts b/packages/contracts/src/agent-skills.ts
+new file mode 100644
+index 0000000..5cc728a
+--- /dev/null
++++ b/packages/contracts/src/agent-skills.ts
+@@ -0,0 +1,89 @@
++/**
++ * Agent 技能目录：Web 菜单与 Worker 执行共用的唯一真源。
++ *
++ * 语义对齐 flomo Agent 的「技能」——把技能名发给它就触发。区别在于本仓库把
++ * 指令注入 system prompt，而不是当作普通用户消息发出，避免长指令污染 RAG 召回。
++ */
++
++export const AGENT_SKILL_IDS = [
++  "daily-insight",
++  "behavior-pattern",
++  "reframe",
++  "yesterday-dream",
++  "book-mirror",
++  "echo-of-then",
++  "on-this-day",
++] as const;
++
++export type AgentSkillId = (typeof AGENT_SKILL_IDS)[number];
++
++/** 取数方式：决定 worker 在回答前给模型喂哪一类确定性上下文。 */
++export type AgentSkillRetrieval =
++  | "semantic" // 沿用向量召回，检索词由 skill 自己控制
++  | "same-day-history" // 那年今日：往年今天的记录
++  | "older-random" // 昨日回声：随机取若干条旧记录，找张力
++  | "none"; // 不额外取数
++
++export type AgentSkill = {
++  id: AgentSkillId;
++  retrieval: AgentSkillRetrieval;
++  /** 注入 system prompt 的指令正文（面向模型，非 UI 文案）。 */
++  prompt: string;
++  /** 作为 RAG 检索词的主题提示（可空，空则不加语义召回）。 */
++  ragHint?: string;
++};
++
++const GUARDRAIL = [
++  "硬要求：只说你真正找到的东西。",
++  "找不到符合要求的记录或矛盾时，直说找不到，并按给定空状态文案回答，绝不编造。",
++  "引用笔记时保留 [来源N] 标记；没有来源就不要假装读过。",
++].join("");
++
++export const AGENT_SKILLS: Record<AgentSkillId, AgentSkill> = {
++  "daily-insight": {
++    id: "daily-insight",
++    retrieval: "semantic",
++    ragHint: "近期记录里反复出现的主题",
++    prompt: `你正在执行「每日新知」技能：从用户已经写过的某个点出发，延伸出一条他还没有记过的新知识。\n要求：先点明是从哪条记录（[来源N]）出发的，再给出那条新知识；新知识必须是可核对的具体内容，不是空泛道理。${GUARDRAIL}`,
++  },
++  "behavior-pattern": {
++    id: "behavior-pattern",
++    retrieval: "semantic",
++    ragHint: "反复出现的做法 习惯 反应",
++    prompt: `你正在执行「行为洞察」技能：从用户最近的记录里，照出一个他反复出现却没有察觉的默认动作。\n要求：用具体记录举证（[来源N]），指出重复的形状，再给出一句他可能没想过的解释。不下道德判断。${GUARDRAIL}`,
++  },
++  reframe: {
++    id: "reframe",
++    retrieval: "semantic",
++    ragHint: "最近困扰我 在想什么",
++    prompt: `你正在执行「幸福灵药」技能：把用户最近在想的事，重新框定成一句不鸡汤的话。\n要求：先复述他真正卡住的那一点（引 [来源N]），再给重新框定；不要安慰式套话，不要感叹号。${GUARDRAIL}`,
++  },
++  "yesterday-dream": {
++    id: "yesterday-dream",
++    retrieval: "semantic",
++    ragHint: "没写完 悬着 好奇 待验证",
++    prompt: `你正在执行「昨天的梦」技能：从用户的记录里挑出一个他还没解开的念头或好奇，抛给他。\n要求：这个好奇必须来自他自己的话（引 [来源N]），不要替他发明新话题。${GUARDRAIL}`,
++  },
++  "book-mirror": {
++    id: "book-mirror",
++    retrieval: "semantic",
++    ragHint: "想读 在看 书",
++    prompt: `你正在执行「书镜」技能：用用户自己的记录照一照他提到的一本书，指出他其实已经想过哪里、还没想通哪里。\n要求：只引用他写过的内容（[来源N]）；没记过的部分明确说没记过，不要转述书的内容。${GUARDRAIL}`,
++  },
++  "echo-of-then": {
++    id: "echo-of-then",
++    retrieval: "older-random",
++    prompt: `你正在执行「昨日回声」技能：从给你的旧记录里，找出两处互相**对不上**的地方，留给他一个真问题。\n要求：必须同时引两条 [来源N]，并说清矛盾在哪；找不到真实矛盾时回答「笔记还太少，找不出张力」，绝不编一个假矛盾。${GUARDRAIL}`,
++  },
++  "on-this-day": {
++    id: "on-this-day",
++    retrieval: "same-day-history",
++    prompt: `你正在执行「那年今日」技能：把往年今天写过什么摆给用户，与现在对照。\n要求：只引用给你的记录；如果没有任何往年今天的记录，回答「往年今天还没有记录」，不要虚构。${GUARDRAIL}`,
++  },
++};
++
++export const AGENT_SKILL_LIST: AgentSkill[] = AGENT_SKILL_IDS.map((id) => AGENT_SKILLS[id]);
++
++export function isAgentSkillId(v: unknown): v is AgentSkillId {
++  return typeof v === "string" && (AGENT_SKILL_IDS as readonly string[]).includes(v);
++}
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index 3870486..346c560 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -1,4 +1,5 @@
+ export * from "./articles";
++export * from "./agent-skills";
+ export * from "./attachment-refs";
+ export * from "./branding";
+ export * from "./calendar";
+diff --git a/patches/README.md b/patches/README.md
+new file mode 100644
+index 0000000..c0014ca
+--- /dev/null
++++ b/patches/README.md
+@@ -0,0 +1,22 @@
++# patches/ —— 本地改动在同步时的生命线
++
++本仓库用 `upstream-sync.yml` 以**快照替换**方式同步上游 FlareMo（`rsync -a --delete` 上游整树）。
++任何对上游已有文件的本地改动，都会在下次同步时被**静默还原**。
++
++因此：凡改动上游已有文件，必须同时把改动登记为这里的 `.patch`，
++同步工作流会在覆盖后 `git apply patches/*.patch`，**打不上就 exit 1**（PR 失败而非静默丢改动）。
++
++## 生成/更新补丁
++
++```bash
++# 从 main 上的本地改动提交生成补丁（编号递增）
++git format-patch -1 <commit-sha> --stdout > patches/0002-<name>.patch
++# 本地验证能干净打上
++git stash -u && rsync --dry-run >/dev/null; git apply --check patches/*.patch && echo OK
++```
++
++## 上游冲突时怎么办
++
++1. 同步 PR 里看工作流日志，它会点名是哪个文件让补丁打不上
++2. 本地 `git checkout -B rebase-patch upstream快照分支`，手工把改动重新贴到新代码上
++3. 重新生成同名 patch 提交，PR 才能继续
+-- 
+2.54.0 (Apple Git-157)
+

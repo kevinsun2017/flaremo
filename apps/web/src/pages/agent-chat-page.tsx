@@ -10,7 +10,6 @@ import {
   ImageIcon,
   PanelRightIcon,
   PlusIcon,
-  PuzzleIcon,
   RefreshCwIcon,
   SparklesIcon,
   XIcon,
@@ -24,7 +23,9 @@ import {
   sendMessage,
   type AgentChatMessage,
 } from "@/api";
+import type { AgentSkillId } from "@flaremo/contracts";
 import { ApiError } from "@/api/client";
+import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -445,8 +446,15 @@ function Composer({
   const [sendError, setSendError] = useState<string | null>(null);
 
   const send = useMutation({
-    mutationFn: ({ content, retry }: { content: string; retry?: boolean }) =>
-      sendMessage(activeId!, content, { retry }),
+    mutationFn: ({
+      content,
+      retry,
+      skill,
+    }: {
+      content: string;
+      retry?: boolean;
+      skill?: AgentSkillId;
+    }) => sendMessage(activeId!, content, { retry, skill }),
     onMutate: async ({ content, retry }) => {
       await qc.cancelQueries({
         queryKey: queryKeys.agent.messages(activeId!),
@@ -536,8 +544,8 @@ function Composer({
         className="min-h-9 resize-none border-0 bg-transparent px-3 pt-2.5 shadow-none focus-visible:ring-0"
         autoFocus
       />
-      {/* Toolbar row: @mention, skills, image (flomo-style); image/skills are
-          P4 scaffolds — submitting is still text-only. */}
+      {/* Toolbar row: @mention, skills, image (flomo-style). Skills are live
+          (the menu sends the skill name plus its id); image attach is a P4 scaffold. */}
       <div className="flex items-center gap-1 px-1.5 pb-1.5">
         <Button
           size="icon-sm"
@@ -548,15 +556,17 @@ function Composer({
         >
           <AtSignIcon className="size-4" strokeWidth={1.5} />
         </Button>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
-          aria-label={t("agent.skills")}
-          title={t("agent.skills")}
-        >
-          <PuzzleIcon className="size-4" strokeWidth={1.5} />
-        </Button>
+        <AgentSkillsMenu
+          disabled={send.isPending}
+          onSelect={(skill) => {
+            setSendError(null);
+            send.mutate({
+              content: t(AGENT_SKILL_KEYS[skill.id].label),
+              retry: false,
+              skill: skill.id,
+            });
+          }}
+        />
         <Button
           size="icon-sm"
           variant="ghost"
