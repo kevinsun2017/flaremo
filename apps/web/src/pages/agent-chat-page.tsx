@@ -480,6 +480,9 @@ function Composer({
       skill?: AgentSkillId;
     }) => sendMessage(activeId!, content, { retry, skill }),
     onMutate: async ({ content, retry }) => {
+      // 乐观追加的同时立刻进入等待态：否则「最后一条是 user」先成立而 awaitingReply 还没置真，
+      // 气泡会先闪一下降级文案再变三点（规格 13.6 要求三点即时可见）。
+      onSent();
       await qc.cancelQueries({
         queryKey: queryKeys.agent.messages(activeId!),
       });
