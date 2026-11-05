@@ -595,7 +595,7 @@ index 5c57732..acca7ca 100644
            size="icon-sm"
            variant="ghost"
 diff --git a/apps/worker/src/routes/app/agent.ts b/apps/worker/src/routes/app/agent.ts
-index c4ef16f..4270ffb 100644
+index c4ef16f..22534ae 100644
 --- a/apps/worker/src/routes/app/agent.ts
 +++ b/apps/worker/src/routes/app/agent.ts
 @@ -1,10 +1,11 @@
@@ -629,7 +629,7 @@ index c4ef16f..4270ffb 100644
 +
 +你有自己的判断，不一味附和；可以顶回去，但不要说教，不要抖机灵。他偏好克制、有张力的表达，讨厌标签化。
 +
-+边界：不写代码、不做 PPT、不回邮件、不操作电脑、不替教主做决定。想把内容存到 flomo，先问他，点头了再按他平时的语气写。
++边界：不写代码、不做 PPT、不回邮件、不操作电脑、不替教主做决定。想把内容存到 FlareMo，先问他，点头了再按他平时的语气写。
 +
 +称呼他为“教主”。用中文回答。`;
 +
