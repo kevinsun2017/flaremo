@@ -1,10 +1,11 @@
 import { agentChatMessages, agentConversations } from "@flaremo/db";
-import { getSemanticSearchMemos, semanticSearchMemos } from "@flaremo/domain";
+import { getSemanticSearchMemos, getRandomMemo, listDailyReviewMemos, semanticSearchMemos } from "@flaremo/domain";
 import { asc, desc, eq, and } from "drizzle-orm";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { getRequestContext, type HonoBindings } from "../../context";
 import { createEmbeddingProvider, createVectorIndex, memoSearchNamespaces } from "../../embedding";
+import { AGENT_SKILLS, isAgentSkillId } from "@flaremo/contracts";
 import { jsonError } from "../../http";
 import { zValidator } from "../../validated";
 import { chatWithAgentModel } from "../llm";
@@ -16,6 +17,7 @@ const createConversationSchema = z.object({
 const chatMessageSchema = z.object({
   content: z.string().trim().min(1).max(8_000),
   retry: z.boolean().optional(),
+  skill: z.string().trim().max(64).optional(),
 });
 
 export function registerAgentRoutes(app: Hono<HonoBindings>) {
@@ -89,7 +91,12 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
       const { db, user } = await getRequestContext(c);
       const convId = c.req.param("id");
 
-        const { content, retry } = c.req.valid("json");
+        const { content, retry, skill: skillRaw } = c.req.valid("json");
+        if (skillRaw !== undefined && !isAgentSkillId(skillRaw)) {
+          return c.json({ error: { message: "unknown agent skill" } }, 400);
+        }
+        // 技能指令注入 system prompt；RAG 检索词单独给，避免长指令污染召回。
+        const skill = isAgentSkillId(skillRaw) ? AGENT_SKILLS[skillRaw] : undefined;
 
         // Confirm the conversation belongs to the caller (owner check).
         const conv = await db
@@ -145,10 +152,34 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
             }));
 
             let ragContext = "";
+            const contextMemos: { content: string }[] = [];
             const provider = createEmbeddingProvider(c.env);
             const index = createVectorIndex(c.env);
-            if (provider && index) {
-              try {
+            const mode = skill?.retrieval ?? "semantic";
+            try {
+              if (mode === "same-day-history") {
+                // 那年今日：复用每日回顾的取数（按 month-day 匹配往年）
+                const today = new Date();
+                const monthDay = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+                for (let back = 1; back <= 5 && contextMemos.length < 5; back += 1) {
+                  const rows = await listDailyReviewMemos(db, user, {
+                    date: `${today.getFullYear() - back}-${monthDay}`,
+                  });
+                  for (const row of rows) if (row.content) contextMemos.push({ content: row.content });
+                }
+              } else if (mode === "older-random") {
+                // 昨日回声：随机取几条旧记录，交给模型找真实张力
+                const pickedIds: string[] = [];
+                for (let i = 0; i < 3; i += 1) {
+                  const picked = await getRandomMemo(db, user, pickedIds);
+                  if (!picked?.content) break;
+                  pickedIds.push(picked.id);
+                  contextMemos.push({ content: picked.content });
+                }
+              } else if (mode === "none") {
+                // 显式不取数
+              } else if (provider && index) {
+                const ragQuery = skill?.ragHint?.trim() || content;
                 const hits = await semanticSearchMemos(
                   db,
                   user,
@@ -157,7 +188,7 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
                     index,
                     namespaces: memoSearchNamespaces(c.env, user, undefined),
                   },
-                  content,
+                  ragQuery,
                   5,
                 );
                 if (hits.length > 0) {
@@ -166,18 +197,24 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
                     user,
                     hits.map((hit) => hit.id),
                   );
-                  ragContext =
-                    "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
-                    memos
-                      .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
-                      .join("\n\n");
+                  for (const memo of memos) if (memo.content) contextMemos.push({ content: memo.content });
                 }
-              } catch (ragErr) {
-                console.error("RAG failed:", ragErr);
               }
+            } catch (ragErr) {
+              console.error("RAG failed:", ragErr);
+            }
+            if (contextMemos.length > 0) {
+              ragContext =
+                "\n\n以下是与你问题相关的记忆笔记（供回答引用，只选相关的，不要编造无关内容）：\n" +
+                contextMemos
+                  .map((memo, i) => `[来源${i + 1}] ${memo.content.slice(0, 500)}`)
+                  .join("\n\n");
+            } else if (mode === "same-day-history" || mode === "older-random") {
+              // 空状态诚实告知，逼模型走护栏文案而不是编造
+              ragContext = "\n\n（本次没有取到任何可引用的历史记录。）";
             }
 
-            const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${ragContext}`;
+            const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${skill ? `\n\n${skill.prompt}` : ""}${ragContext}`;
             try {
               const reply = await chatWithAgentModel(c.env, db, [
                 { role: "system", content: systemPrompt },
