@@ -19,6 +19,8 @@ const messages = {
   "agent.disclaimer": "Содержимое создано ИИ и носит справочный характер",
   "agent.mention": "@ упоминание",
   "agent.skills": "Навыки",
+  "agent.pending": "Ассистент готовит ответ",
+  "agent.stillProcessing": "Всё ещё обрабатывается",
   "agent.skill.dailyInsight.label": "Мысль дня",
   "agent.skill.dailyInsight.desc": "Взять одну вашу запись и развернуть её в новое, ещё не записанное",
   "agent.skill.behaviorPattern.label": "Паттерн поведения",

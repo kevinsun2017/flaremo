@@ -19,6 +19,8 @@ const messages = {
   "agent.disclaimer": "Contenu généré par l'IA, à titre de référence uniquement",
   "agent.mention": "@ mention",
   "agent.skills": "Compétences",
+  "agent.pending": "L'assistant rédige une réponse",
+  "agent.stillProcessing": "Traitement en cours",
   "agent.skill.dailyInsight.label": "Savoir du jour",
   "agent.skill.dailyInsight.desc": "Prolonger un point déjà noté vers quelque chose que vous n'avez pas encore écrit",
   "agent.skill.behaviorPattern.label": "Schéma de comportement",

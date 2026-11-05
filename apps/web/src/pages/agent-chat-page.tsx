@@ -26,6 +26,7 @@ import {
 import type { AgentSkillId } from "@flaremo/contracts";
 import { ApiError } from "@/api/client";
 import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
+import { AgentPendingBubble } from "@/components/agent-pending-bubble";
 import { LazyMemoContent } from "@/components/lazy-memo-content";
 import { Button } from "@/components/ui/button";
 import {
@@ -161,6 +162,18 @@ export function AgentChatDialog() {
     const last = msgs[msgs.length - 1];
     if (last?.role === "assistant") setAwaitingReply(false);
   }, [messages.data, awaitingReply]);
+
+  // 可见性由内容驱动：最后一条是 user 就是还在等回复。快轮询的 60 秒兜底只停快轮询，
+  // 这里接着慢轮询，气泡因此不会凭空消失（超时会降级成「仍在处理」）。
+  const pendingReply =
+    (messages.data?.messages ?? []).at(-1)?.role === "user";
+  useEffect(() => {
+    if (!open || !activeId || awaitingReply || !pendingReply) return;
+    const slow = setInterval(() => {
+      qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId) });
+    }, 5000);
+    return () => clearInterval(slow);
+  }, [open, activeId, awaitingReply, pendingReply, qc]);
 
   const startNew = () => {
     setSources({});
@@ -307,6 +320,7 @@ export function AgentChatDialog() {
             messages={messages.data?.messages}
             loading={messages.isLoading}
             sources={sources}
+            awaitingReply={awaitingReply}
           />
 
           {/* Composer */}
@@ -334,11 +348,13 @@ function ChatScroll({
   messages,
   loading,
   sources,
+  awaitingReply,
 }: {
   activeId: string | null;
   messages?: AgentChatMessage[];
   loading: boolean;
   sources: Record<string, string[]>;
+  awaitingReply: boolean;
 }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
@@ -379,6 +395,9 @@ function ChatScroll({
       {messages.map((m) => (
         <MessageBubble key={m.id} message={m} sources={sources[m.id]} />
       ))}
+      {messages.at(-1)?.role === "user" && (
+        <AgentPendingBubble slow={!awaitingReply} />
+      )}
       <div ref={endRef} />
     </div>
   );

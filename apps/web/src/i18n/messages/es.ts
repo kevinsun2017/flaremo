@@ -20,6 +20,8 @@ const messages = {
   "agent.disclaimer": "El contenido lo genera la IA y es solo de referencia",
   "agent.mention": "@ mencionar",
   "agent.skills": "Habilidades",
+  "agent.pending": "El asistente está redactando una respuesta",
+  "agent.stillProcessing": "Sigue procesando",
   "agent.skill.dailyInsight.label": "Idea del día",
   "agent.skill.dailyInsight.desc": "Toma un punto que escribiste y llévalo a algo que aún no has anotado",
   "agent.skill.behaviorPattern.label": "Patrón de conducta",
