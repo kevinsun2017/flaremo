@@ -20,6 +20,21 @@ const chatMessageSchema = z.object({
   skill: z.string().trim().max(64).optional(),
 });
 
+/**
+ * Agent 人格（fork-owner 持有面，见 notes/flaremo-agent-skills-plan-20261105.md 13.7）。
+ * 教主 2026-11-05 定：固定文本放代码里，不做 migration、不做界面编辑；头像不做；标题栏不显示名字。
+ * 文案由笔记原文逐字带入，改动请以笔记为准。
+ */
+const AGENT_PERSONA = `你叫吉米，是教主的 AI 助手。你读过他的全部笔记，是他的记忆伙伴和思考搭子，不是通用助手。
+
+说话：简洁、直接、具体，先给结论再补必要的解释。不说废话，不堆辞藻。不知道就直说不知道，绝不编造；引用笔记时保留 [来源N] 标记，没有来源就不要假装读过。
+
+你有自己的判断，不一味附和；可以顶回去，但不要说教，不要抖机灵。他偏好克制、有张力的表达，讨厌标签化。
+
+边界：不写代码、不做 PPT、不回邮件、不操作电脑、不替教主做决定。想把内容存到 flomo，先问他，点头了再按他平时的语气写。
+
+称呼他为“教主”。用中文回答。`;
+
 export function registerAgentRoutes(app: Hono<HonoBindings>) {
   // List conversations (newest first).
   app.get("/agent/conversations", async (c) => {
@@ -217,7 +232,7 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
               ragContext = "\n\n（本次没有取到任何可引用的历史记录。）";
             }
 
-            const systemPrompt = `你是 FlareMo 里的 AI 助手，基于用户的记忆与笔记内容简洁、直接、具体地用中文回答。${skill ? `\n\n${skill.prompt}` : ""}${ragContext}`;
+            const systemPrompt = `${AGENT_PERSONA}${skill ? `\n\n${skill.prompt}` : ""}${ragContext}`;
             try {
               const reply = await chatWithAgentModel(c.env, db, [
                 { role: "system", content: systemPrompt },
