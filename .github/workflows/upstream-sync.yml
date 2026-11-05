@@ -5,9 +5,9 @@ name: upstream-sync
 # 与上游没有任何共同祖先，merge 会直接 fatal: refusing to merge unrelated histories。
 # 你点 Merge → 推 main → Cloudflare Workers Builds 自动：构建 → pnpm migrate:remote → 部署。
 
+# 手动触发（教主决定：钉在 v0.28，Agent 面板+技能由我们自己长期持有，
+# 因此不再自动追版本。每次手动同步前必须先扫上游 release notes 的安全项再决定合不合。）
 on:
-  schedule:
-    - cron: "0 1 * * *"   # 01:00 UTC = 09:00 北京时间
   workflow_dispatch:
     inputs:
       tag:
