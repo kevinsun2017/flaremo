@@ -29,6 +29,14 @@ vi.mock("@tanstack/react-router", () => ({
   },
 }));
 
+vi.mock("@/components/lazy-memo-content", () => ({
+  // The real component lazy-loads the Markdown chunk, which SSR in tests cannot
+  // resolve; the contract we care about is *which path a bubble takes*, so stub it.
+  LazyMemoContent: ({ content, className }: { content: string; className?: string }) => (
+    <div className={`memo-markdown ${className ?? ""}`}>{content}</div>
+  ),
+}));
+
 import type { AgentChatMessage } from "@/api";
 import { MessageBubble } from "./agent-chat-page";
 
@@ -83,5 +91,25 @@ describe("AgentChatPage MessageBubble", () => {
     );
     expect(html).toContain("问题");
     expect(html).not.toContain("agent.sources");
+  });
+});
+
+describe("MessageBubble rendering path", () => {
+  it("renders assistant answers through the Markdown component", () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble message={makeMessage({ content: "**加粗** 与 [来源1]" })} />,
+    );
+    expect(html).toContain("memo-markdown");
+    // 不再走纯文本 <p> 直出
+    expect(html).not.toMatch(/<p class="whitespace-pre-wrap[^"]*">\*\*/);
+  });
+
+  it("keeps user messages as plain text", () => {
+    const html = renderToStaticMarkup(
+      <MessageBubble message={makeMessage({ role: "user", content: "**我不该被重排**" })} />,
+    );
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).not.toContain("memo-markdown");
+    expect(html).toContain("**我不该被重排**");
   });
 });
