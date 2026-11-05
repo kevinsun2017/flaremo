@@ -1,78 +1,3 @@
-From f4901d12806cb425c4160c8cb154c1c6140e380c Mon Sep 17 00:00:00 2001
-From: kevinsun2017 <muer322@gmail.com>
-Date: Thu, 5 Nov 2026 11:54:14 +0800
-Subject: [PATCH] feat(agent): flomo-style skills menu (7 skills, system-prompt
- injection, deterministic recall)
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-- contracts: AGENT_SKILLS catalog (id / retrieval mode / prompt / ragHint) as single source
-- worker: chat messages accept {skill}; skill instructions injected into system prompt;
-  RAG query comes from the skill topic instead of the raw message, so long prompts no
-  longer pollute recall; same-day-history and older-random reuse domain functions
-  (listDailyReviewMemos / getRandomMemo) — no SQL; empty recall says so plainly
-- web: AgentSkillsMenu on the previously dead skills button; message body carries only
-  the skill name; skill id travels as a request field
-- i18n: 14 keys across all 8 locales (parity test green)
-- sync: re-apply patches/*.patch after snapshot; fail loudly on conflict
-
-Refs: notes/flaremo-agent-skills-plan-20261105.md (定论 2026-11-05)
----
- .github/workflows/upstream-sync.yml           | 18 ++++
- apps/web/src/api/agent.ts                     |  7 +-
- apps/web/src/components/agent-skills-menu.tsx | 76 ++++++++++++++++
- apps/web/src/i18n/messages/ar.ts              | 14 +++
- apps/web/src/i18n/messages/en-US.ts           | 14 +++
- apps/web/src/i18n/messages/es.ts              | 14 +++
- apps/web/src/i18n/messages/fr.ts              | 14 +++
- apps/web/src/i18n/messages/ja.ts              | 14 +++
- apps/web/src/i18n/messages/ko.ts              | 14 +++
- apps/web/src/i18n/messages/ru.ts              | 14 +++
- apps/web/src/i18n/messages/zh-CN.ts           | 14 +++
- apps/web/src/pages/agent-chat-page.tsx        | 38 +++++---
- apps/worker/src/routes/app/agent.ts           | 63 ++++++++++---
- packages/contracts/src/agent-skills.ts        | 89 +++++++++++++++++++
- packages/contracts/src/index.ts               |  1 +
- patches/README.md                             | 22 +++++
- 16 files changed, 398 insertions(+), 28 deletions(-)
- create mode 100644 apps/web/src/components/agent-skills-menu.tsx
- create mode 100644 packages/contracts/src/agent-skills.ts
- create mode 100644 patches/README.md
-
-diff --git a/.github/workflows/upstream-sync.yml b/.github/workflows/upstream-sync.yml
-index cd2f699..d28327a 100644
---- a/.github/workflows/upstream-sync.yml
-+++ b/.github/workflows/upstream-sync.yml
-@@ -73,10 +73,28 @@ jobs:
-             --exclude=wrangler.jsonc \
-             --exclude=.gitattributes \
-             --exclude=.upstream-tag \
-+            --exclude=patches \
-             --exclude=.github \
-             /tmp/up/ ./
-           echo "$TAG" > .upstream-tag
- 
-+          # ── 本地补丁必须重新贴回 ──────────────────────────────
-+          # 快照替换会把上游已有文件恢复成原样，因此本仓库对上游文件的改动
-+          # 一律以 patches/*.patch 保存。打不上就失败：宁可红着，也不要静默丢掉功能。
-+          if compgen -G "patches/*.patch" > /dev/null; then
-+            if git apply --check patches/*.patch 2>/dev/null; then
-+              git apply patches/*.patch
-+              echo "已重新贴回 $(ls patches/*.patch | wc -l | tr -d ' ') 个本地补丁"
-+            else
-+              echo "::error::patches/ 里的本地补丁与 ${TAG} 冲突，需人工重做（步骤见 patches/README.md）。本次同步不可合并。"
-+              for f in patches/*.patch; do
-+                echo "  - $f："
-+                git apply --check "$f" 2>&1 | sed 's/^/      /'
-+              done
-+              exit 1
-+            fi
-+          fi
-+
-       - name: 开同步 PR
-         if: steps.tag.outputs.skip != 'true'
-         env:
 diff --git a/apps/web/src/api/agent.ts b/apps/web/src/api/agent.ts
 index 2471083..5f0f8bb 100644
 --- a/apps/web/src/api/agent.ts
@@ -457,7 +382,7 @@ index 5c57732..bce5492 100644
            size="icon-sm"
            variant="ghost"
 diff --git a/apps/worker/src/routes/app/agent.ts b/apps/worker/src/routes/app/agent.ts
-index c4ef16f..196c119 100644
+index c4ef16f..d287a84 100644
 --- a/apps/worker/src/routes/app/agent.ts
 +++ b/apps/worker/src/routes/app/agent.ts
 @@ -1,10 +1,11 @@
@@ -469,7 +394,7 @@ index c4ef16f..196c119 100644
  import { z } from "zod";
  import { getRequestContext, type HonoBindings } from "../../context";
  import { createEmbeddingProvider, createVectorIndex, memoSearchNamespaces } from "../../embedding";
-+import { AGENT_SKILLS, isAgentSkillId } from "@flaremo/contracts";
++import { AGENT_SKILLS, isAgentSkillId, type AgentSkill } from "@flaremo/contracts";
  import { jsonError } from "../../http";
  import { zValidator } from "../../validated";
  import { chatWithAgentModel } from "../llm";
@@ -481,21 +406,24 @@ index c4ef16f..196c119 100644
  });
  
  export function registerAgentRoutes(app: Hono<HonoBindings>) {
-@@ -89,7 +91,12 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+@@ -89,7 +91,15 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
        const { db, user } = await getRequestContext(c);
        const convId = c.req.param("id");
  
 -        const { content, retry } = c.req.valid("json");
 +        const { content, retry, skill: skillRaw } = c.req.valid("json");
-+        if (skillRaw !== undefined && !isAgentSkillId(skillRaw)) {
-+          return c.json({ error: { message: "unknown agent skill" } }, 400);
++        // 技能是附加层，不是承重墙：未知或后端尚不认识的 skill 一律降级成普通对话，
++        // 绝不因此拒掉用户消息（前端先上线 / 旧 Worker / 缓存 JS 都可能撞上）。
++        let skill: AgentSkill | undefined;
++        if (skillRaw !== undefined) {
++          if (isAgentSkillId(skillRaw)) skill = AGENT_SKILLS[skillRaw];
++          else console.warn("agent: ignoring unknown skill", skillRaw);
 +        }
 +        // 技能指令注入 system prompt；RAG 检索词单独给，避免长指令污染召回。
-+        const skill = isAgentSkillId(skillRaw) ? AGENT_SKILLS[skillRaw] : undefined;
  
          // Confirm the conversation belongs to the caller (owner check).
          const conv = await db
-@@ -145,10 +152,34 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+@@ -145,10 +155,34 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
              }));
  
              let ragContext = "";
@@ -532,7 +460,7 @@ index c4ef16f..196c119 100644
                  const hits = await semanticSearchMemos(
                    db,
                    user,
-@@ -157,7 +188,7 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+@@ -157,7 +191,7 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
                      index,
                      namespaces: memoSearchNamespaces(c.env, user, undefined),
                    },
@@ -541,7 +469,7 @@ index c4ef16f..196c119 100644
                    5,
                  );
                  if (hits.length > 0) {
-@@ -166,18 +197,24 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
+@@ -166,18 +200,24 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
                      user,
                      hits.map((hit) => hit.id),
                    );
@@ -679,34 +607,3 @@ index 3870486..346c560 100644
  export * from "./attachment-refs";
  export * from "./branding";
  export * from "./calendar";
-diff --git a/patches/README.md b/patches/README.md
-new file mode 100644
-index 0000000..c0014ca
---- /dev/null
-+++ b/patches/README.md
-@@ -0,0 +1,22 @@
-+# patches/ —— 本地改动在同步时的生命线
-+
-+本仓库用 `upstream-sync.yml` 以**快照替换**方式同步上游 FlareMo（`rsync -a --delete` 上游整树）。
-+任何对上游已有文件的本地改动，都会在下次同步时被**静默还原**。
-+
-+因此：凡改动上游已有文件，必须同时把改动登记为这里的 `.patch`，
-+同步工作流会在覆盖后 `git apply patches/*.patch`，**打不上就 exit 1**（PR 失败而非静默丢改动）。
-+
-+## 生成/更新补丁
-+
-+```bash
-+# 从 main 上的本地改动提交生成补丁（编号递增）
-+git format-patch -1 <commit-sha> --stdout > patches/0002-<name>.patch
-+# 本地验证能干净打上
-+git stash -u && rsync --dry-run >/dev/null; git apply --check patches/*.patch && echo OK
-+```
-+
-+## 上游冲突时怎么办
-+
-+1. 同步 PR 里看工作流日志，它会点名是哪个文件让补丁打不上
-+2. 本地 `git checkout -B rebase-patch upstream快照分支`，手工把改动重新贴到新代码上
-+3. 重新生成同名 patch 提交，PR 才能继续
--- 
-2.54.0 (Apple Git-157)
-

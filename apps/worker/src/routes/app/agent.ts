@@ -5,7 +5,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import { getRequestContext, type HonoBindings } from "../../context";
 import { createEmbeddingProvider, createVectorIndex, memoSearchNamespaces } from "../../embedding";
-import { AGENT_SKILLS, isAgentSkillId } from "@flaremo/contracts";
+import { AGENT_SKILLS, isAgentSkillId, type AgentSkill } from "@flaremo/contracts";
 import { jsonError } from "../../http";
 import { zValidator } from "../../validated";
 import { chatWithAgentModel } from "../llm";
@@ -92,11 +92,14 @@ export function registerAgentRoutes(app: Hono<HonoBindings>) {
       const convId = c.req.param("id");
 
         const { content, retry, skill: skillRaw } = c.req.valid("json");
-        if (skillRaw !== undefined && !isAgentSkillId(skillRaw)) {
-          return c.json({ error: { message: "unknown agent skill" } }, 400);
+        // 技能是附加层，不是承重墙：未知或后端尚不认识的 skill 一律降级成普通对话，
+        // 绝不因此拒掉用户消息（前端先上线 / 旧 Worker / 缓存 JS 都可能撞上）。
+        let skill: AgentSkill | undefined;
+        if (skillRaw !== undefined) {
+          if (isAgentSkillId(skillRaw)) skill = AGENT_SKILLS[skillRaw];
+          else console.warn("agent: ignoring unknown skill", skillRaw);
         }
         // 技能指令注入 system prompt；RAG 检索词单独给，避免长指令污染召回。
-        const skill = isAgentSkillId(skillRaw) ? AGENT_SKILLS[skillRaw] : undefined;
 
         // Confirm the conversation belongs to the caller (owner check).
         const conv = await db
