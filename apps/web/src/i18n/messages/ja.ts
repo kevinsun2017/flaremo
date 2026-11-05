@@ -19,6 +19,8 @@ const messages = {
   "agent.disclaimer": "内容は AI が生成したものであり、参考用です",
   "agent.mention": "@ メンション",
   "agent.skills": "スキル",
+  "agent.pending": "アシスタントが回答を生成中です",
+  "agent.stillProcessing": "まだ処理中です",
   "agent.skill.dailyInsight.label": "今日の新知",
   "agent.skill.dailyInsight.desc": "書いたある一点から、まだ記録していない新知を一条伸ばす",
   "agent.skill.behaviorPattern.label": "行動の洞察",

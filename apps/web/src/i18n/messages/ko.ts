@@ -20,6 +20,8 @@ const messages = {
   "agent.disclaimer": "AI가 생성한 내용이며 참고용입니다",
   "agent.mention": "@ 멘션",
   "agent.skills": "스킬",
+  "agent.pending": "어시스턴트가 답변을 만드는 중입니다",
+  "agent.stillProcessing": "아직 처리 중입니다",
   "agent.skill.dailyInsight.label": "오늘의 신지",
   "agent.skill.dailyInsight.desc": "적어 둔 한 지점에서 아직 적지 않은 새 지식을 하나 뻗어냅니다",
   "agent.skill.behaviorPattern.label": "행동 통찰",

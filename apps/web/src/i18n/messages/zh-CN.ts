@@ -18,6 +18,8 @@ const messages = {
   "agent.disclaimer": "当前内容由 AI 生成，仅供参考",
   "agent.mention": "@ 提及",
   "agent.skills": "技能",
+  "agent.pending": "助手正在生成回复",
+  "agent.stillProcessing": "仍在处理",
   "agent.skill.dailyInsight.label": "每日新知",
   "agent.skill.dailyInsight.desc": "从你写过的某个点，延伸一条你还没记过的新知识",
   "agent.skill.behaviorPattern.label": "行为洞察",

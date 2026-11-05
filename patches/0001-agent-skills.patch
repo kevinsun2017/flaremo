@@ -21,6 +21,87 @@ index 2471083..5f0f8bb 100644
    return apiRequest<{ status: string }>(
      `/api/app/agent/conversations/${encodeURIComponent(conversationId)}/messages`,
      { method: "POST", body: JSON.stringify({ content, ...options }) },
+diff --git a/apps/web/src/components/agent-pending-bubble.test.tsx b/apps/web/src/components/agent-pending-bubble.test.tsx
+new file mode 100644
+index 0000000..94af99d
+--- /dev/null
++++ b/apps/web/src/components/agent-pending-bubble.test.tsx
+@@ -0,0 +1,26 @@
++// @vitest-environment jsdom
++import { renderToStaticMarkup } from "react-dom/server";
++import { describe, expect, it, vi } from "vitest";
++
++vi.mock("@/i18n", () => ({
++  useI18n: () => ({ t: (key: string) => key }),
++}));
++
++import { AgentPendingBubble } from "./agent-pending-bubble";
++
++describe("AgentPendingBubble", () => {
++  it("shows three dots and an accessible label while fast-waiting", () => {
++    const html = renderToStaticMarkup(<AgentPendingBubble />);
++    expect(html).toContain("agent.pending");
++    expect((html.match(/animate-bounce/g) ?? []).length).toBe(3);
++    // 快等阶段不该出现降级文案
++    expect(html).not.toContain("agent.stillProcessing");
++  });
++
++  it("degrades to 'still processing' instead of vanishing after the 60s poll bound", () => {
++    const html = renderToStaticMarkup(<AgentPendingBubble slow />);
++    expect(html).toContain("agent.stillProcessing");
++    expect(html).not.toContain("animate-bounce");
++    expect(html).toContain('role="status"');
++  });
++});
+diff --git a/apps/web/src/components/agent-pending-bubble.tsx b/apps/web/src/components/agent-pending-bubble.tsx
+new file mode 100644
+index 0000000..48b7007
+--- /dev/null
++++ b/apps/web/src/components/agent-pending-bubble.tsx
+@@ -0,0 +1,43 @@
++import { useI18n } from "@/i18n";
++import { cn } from "@/lib/utils";
++
++/**
++ * Assistant 等待态气泡。
++ *
++ * `slow` 决定形态：默认是三点加载；`slow` 为真表示快轮询的 60 秒兜底已经到点、
++ * 但回复仍未落地 —— 此时**不能消失**，改显「仍在处理」，由外层继续慢轮询直到回复到达。
++ * 可见性由消息内容驱动（最后一条是不是 user），不靠计时器，所以切会话/刷新都不会误留。
++ */
++export function AgentPendingBubble({ slow }: { slow?: boolean }) {
++  const { t } = useI18n();
++  const bubble =
++    "max-w-[85%] rounded-xl border border-border/50 bg-card/50 shadow-xs";
++
++  if (slow) {
++    return (
++      <div className="flex w-full justify-start" role="status" aria-live="polite">
++        <div className={cn(bubble, "p-3 text-sm text-muted-foreground")}>
++          {t("agent.stillProcessing")}
++        </div>
++      </div>
++    );
++  }
++
++  return (
++    <div className="flex w-full justify-start" role="status" aria-live="polite">
++      <div className={cn(bubble, "flex items-center gap-1.5 px-3.5 py-3.5")}>
++        {[0, 1, 2].map((i) => (
++          <span
++            key={i}
++            className={cn(
++              "size-1.5 animate-bounce rounded-full bg-muted-foreground/70",
++              "motion-reduce:animate-none",
++            )}
++            style={{ animationDelay: `${i * 140}ms` }}
++          />
++        ))}
++        <span className="sr-only">{t("agent.pending")}</span>
++      </div>
++    </div>
++  );
++}
 diff --git a/apps/web/src/components/agent-skills-menu.tsx b/apps/web/src/components/agent-skills-menu.tsx
 new file mode 100644
 index 0000000..17ea177
@@ -104,13 +185,15 @@ index 0000000..17ea177
 +  );
 +}
 diff --git a/apps/web/src/i18n/messages/ar.ts b/apps/web/src/i18n/messages/ar.ts
-index 7790c0f..188ba6f 100644
+index 7790c0f..2ef32c7 100644
 --- a/apps/web/src/i18n/messages/ar.ts
 +++ b/apps/web/src/i18n/messages/ar.ts
-@@ -19,6 +19,20 @@ const messages = {
+@@ -19,6 +19,22 @@ const messages = {
    "agent.disclaimer": "المحتوى مُنتج بواسطة الذكاء الاصطناعي وهو للرجوع إليه فقط",
    "agent.mention": "@ إشارة",
    "agent.skills": "المهارات",
++  "agent.pending": "المساعد يُعدّ الردًا",
++  "agent.stillProcessing": "ما يزال قيد المعالجة",
 +  "agent.skill.dailyInsight.label": "معرفة اليوم",
 +  "agent.skill.dailyInsight.desc": "من نقطة كتبتها، توسّع فكرة جديدة لم تكتبها بعد",
 +  "agent.skill.behaviorPattern.label": "نمط السلوك",
@@ -129,13 +212,15 @@ index 7790c0f..188ba6f 100644
    "agent.newConversation": "محادثة جديدة",
    "agent.emptyConversations": "لا توجد محادثات بعد",
 diff --git a/apps/web/src/i18n/messages/en-US.ts b/apps/web/src/i18n/messages/en-US.ts
-index 9484da5..a281b15 100644
+index 9484da5..8edacca 100644
 --- a/apps/web/src/i18n/messages/en-US.ts
 +++ b/apps/web/src/i18n/messages/en-US.ts
-@@ -20,6 +20,20 @@ const messages = {
+@@ -20,6 +20,22 @@ const messages = {
    "agent.disclaimer": "Content is AI-generated and for reference only",
    "agent.mention": "@ mention",
    "agent.skills": "Skills",
++  "agent.pending": "Assistant is generating a reply",
++  "agent.stillProcessing": "Still processing",
 +  "agent.skill.dailyInsight.label": "Daily Insight",
 +  "agent.skill.dailyInsight.desc": "Take one point you wrote and extend it into something you haven't recorded yet",
 +  "agent.skill.behaviorPattern.label": "Behavior Pattern",
@@ -154,13 +239,15 @@ index 9484da5..a281b15 100644
    "agent.newConversation": "New chat",
    "agent.emptyConversations": "No conversations yet",
 diff --git a/apps/web/src/i18n/messages/es.ts b/apps/web/src/i18n/messages/es.ts
-index 2dcc2ea..43dcae3 100644
+index 2dcc2ea..4cf3970 100644
 --- a/apps/web/src/i18n/messages/es.ts
 +++ b/apps/web/src/i18n/messages/es.ts
-@@ -20,6 +20,20 @@ const messages = {
+@@ -20,6 +20,22 @@ const messages = {
    "agent.disclaimer": "El contenido lo genera la IA y es solo de referencia",
    "agent.mention": "@ mencionar",
    "agent.skills": "Habilidades",
++  "agent.pending": "El asistente está redactando una respuesta",
++  "agent.stillProcessing": "Sigue procesando",
 +  "agent.skill.dailyInsight.label": "Idea del día",
 +  "agent.skill.dailyInsight.desc": "Toma un punto que escribiste y llévalo a algo que aún no has anotado",
 +  "agent.skill.behaviorPattern.label": "Patrón de conducta",
@@ -179,13 +266,15 @@ index 2dcc2ea..43dcae3 100644
    "agent.newConversation": "Nueva conversación",
    "agent.emptyConversations": "Aún no hay conversaciones",
 diff --git a/apps/web/src/i18n/messages/fr.ts b/apps/web/src/i18n/messages/fr.ts
-index 654d017..87156e1 100644
+index 654d017..76c5f32 100644
 --- a/apps/web/src/i18n/messages/fr.ts
 +++ b/apps/web/src/i18n/messages/fr.ts
-@@ -19,6 +19,20 @@ const messages = {
+@@ -19,6 +19,22 @@ const messages = {
    "agent.disclaimer": "Contenu généré par l'IA, à titre de référence uniquement",
    "agent.mention": "@ mention",
    "agent.skills": "Compétences",
++  "agent.pending": "L'assistant rédige une réponse",
++  "agent.stillProcessing": "Traitement en cours",
 +  "agent.skill.dailyInsight.label": "Savoir du jour",
 +  "agent.skill.dailyInsight.desc": "Prolonger un point déjà noté vers quelque chose que vous n'avez pas encore écrit",
 +  "agent.skill.behaviorPattern.label": "Schéma de comportement",
@@ -204,13 +293,15 @@ index 654d017..87156e1 100644
    "agent.newConversation": "Nouvelle conversation",
    "agent.emptyConversations": "Aucune conversation pour l'instant",
 diff --git a/apps/web/src/i18n/messages/ja.ts b/apps/web/src/i18n/messages/ja.ts
-index f681cf6..2f76189 100644
+index f681cf6..a9bf409 100644
 --- a/apps/web/src/i18n/messages/ja.ts
 +++ b/apps/web/src/i18n/messages/ja.ts
-@@ -19,6 +19,20 @@ const messages = {
+@@ -19,6 +19,22 @@ const messages = {
    "agent.disclaimer": "内容は AI が生成したものであり、参考用です",
    "agent.mention": "@ メンション",
    "agent.skills": "スキル",
++  "agent.pending": "アシスタントが回答を生成中です",
++  "agent.stillProcessing": "まだ処理中です",
 +  "agent.skill.dailyInsight.label": "今日の新知",
 +  "agent.skill.dailyInsight.desc": "書いたある一点から、まだ記録していない新知を一条伸ばす",
 +  "agent.skill.behaviorPattern.label": "行動の洞察",
@@ -229,13 +320,15 @@ index f681cf6..2f76189 100644
    "agent.newConversation": "新しい会話",
    "agent.emptyConversations": "会話はまだありません",
 diff --git a/apps/web/src/i18n/messages/ko.ts b/apps/web/src/i18n/messages/ko.ts
-index d7987ba..c708ae7 100644
+index d7987ba..67f9b22 100644
 --- a/apps/web/src/i18n/messages/ko.ts
 +++ b/apps/web/src/i18n/messages/ko.ts
-@@ -20,6 +20,20 @@ const messages = {
+@@ -20,6 +20,22 @@ const messages = {
    "agent.disclaimer": "AI가 생성한 내용이며 참고용입니다",
    "agent.mention": "@ 멘션",
    "agent.skills": "스킬",
++  "agent.pending": "어시스턴트가 답변을 만드는 중입니다",
++  "agent.stillProcessing": "아직 처리 중입니다",
 +  "agent.skill.dailyInsight.label": "오늘의 신지",
 +  "agent.skill.dailyInsight.desc": "적어 둔 한 지점에서 아직 적지 않은 새 지식을 하나 뻗어냅니다",
 +  "agent.skill.behaviorPattern.label": "행동 통찰",
@@ -254,13 +347,15 @@ index d7987ba..c708ae7 100644
    "agent.newConversation": "새 대화",
    "agent.emptyConversations": "아직 대화가 없습니다",
 diff --git a/apps/web/src/i18n/messages/ru.ts b/apps/web/src/i18n/messages/ru.ts
-index 9e5da78..99ac5be 100644
+index 9e5da78..5401de5 100644
 --- a/apps/web/src/i18n/messages/ru.ts
 +++ b/apps/web/src/i18n/messages/ru.ts
-@@ -19,6 +19,20 @@ const messages = {
+@@ -19,6 +19,22 @@ const messages = {
    "agent.disclaimer": "Содержимое создано ИИ и носит справочный характер",
    "agent.mention": "@ упоминание",
    "agent.skills": "Навыки",
++  "agent.pending": "Ассистент готовит ответ",
++  "agent.stillProcessing": "Всё ещё обрабатывается",
 +  "agent.skill.dailyInsight.label": "Мысль дня",
 +  "agent.skill.dailyInsight.desc": "Взять одну вашу запись и развернуть её в новое, ещё не записанное",
 +  "agent.skill.behaviorPattern.label": "Паттерн поведения",
@@ -279,13 +374,15 @@ index 9e5da78..99ac5be 100644
    "agent.newConversation": "Новый чат",
    "agent.emptyConversations": "Пока нет бесед",
 diff --git a/apps/web/src/i18n/messages/zh-CN.ts b/apps/web/src/i18n/messages/zh-CN.ts
-index 4cedb31..2d9cb3b 100644
+index 4cedb31..a9e0b54 100644
 --- a/apps/web/src/i18n/messages/zh-CN.ts
 +++ b/apps/web/src/i18n/messages/zh-CN.ts
-@@ -18,6 +18,20 @@ const messages = {
+@@ -18,6 +18,22 @@ const messages = {
    "agent.disclaimer": "当前内容由 AI 生成，仅供参考",
    "agent.mention": "@ 提及",
    "agent.skills": "技能",
++  "agent.pending": "助手正在生成回复",
++  "agent.stillProcessing": "仍在处理",
 +  "agent.skill.dailyInsight.label": "每日新知",
 +  "agent.skill.dailyInsight.desc": "从你写过的某个点，延伸一条你还没记过的新知识",
 +  "agent.skill.behaviorPattern.label": "行为洞察",
@@ -350,7 +447,7 @@ index 0e18af7..7c14295 100644
 +  });
 +});
 diff --git a/apps/web/src/pages/agent-chat-page.tsx b/apps/web/src/pages/agent-chat-page.tsx
-index 5c57732..c8853cf 100644
+index 5c57732..3d054b7 100644
 --- a/apps/web/src/pages/agent-chat-page.tsx
 +++ b/apps/web/src/pages/agent-chat-page.tsx
 @@ -10,7 +10,6 @@ import {
@@ -361,18 +458,70 @@ index 5c57732..c8853cf 100644
    RefreshCwIcon,
    SparklesIcon,
    XIcon,
-@@ -24,7 +23,10 @@ import {
+@@ -24,7 +23,11 @@ import {
    sendMessage,
    type AgentChatMessage,
  } from "@/api";
 +import type { AgentSkillId } from "@flaremo/contracts";
  import { ApiError } from "@/api/client";
 +import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
++import { AgentPendingBubble } from "@/components/agent-pending-bubble";
 +import { LazyMemoContent } from "@/components/lazy-memo-content";
  import { Button } from "@/components/ui/button";
  import {
    DropdownMenu,
-@@ -406,7 +408,11 @@ export function MessageBubble({
+@@ -160,6 +163,18 @@ export function AgentChatDialog() {
+     if (last?.role === "assistant") setAwaitingReply(false);
+   }, [messages.data, awaitingReply]);
+ 
++  // 可见性由内容驱动：最后一条是 user 就是还在等回复。快轮询的 60 秒兜底只停快轮询，
++  // 这里接着慢轮询，气泡因此不会凭空消失（超时会降级成「仍在处理」）。
++  const pendingReply =
++    (messages.data?.messages ?? []).at(-1)?.role === "user";
++  useEffect(() => {
++    if (!open || !activeId || awaitingReply || !pendingReply) return;
++    const slow = setInterval(() => {
++      qc.invalidateQueries({ queryKey: queryKeys.agent.messages(activeId) });
++    }, 5000);
++    return () => clearInterval(slow);
++  }, [open, activeId, awaitingReply, pendingReply, qc]);
++
+   const startNew = () => {
+     setSources({});
+     create.mutate();
+@@ -305,6 +320,7 @@ export function AgentChatDialog() {
+             messages={messages.data?.messages}
+             loading={messages.isLoading}
+             sources={sources}
++            awaitingReply={awaitingReply}
+           />
+ 
+           {/* Composer */}
+@@ -332,11 +348,13 @@ function ChatScroll({
+   messages,
+   loading,
+   sources,
++  awaitingReply,
+ }: {
+   activeId: string | null;
+   messages?: AgentChatMessage[];
+   loading: boolean;
+   sources: Record<string, string[]>;
++  awaitingReply: boolean;
+ }) {
+   const { t } = useI18n();
+   const endRef = useRef<HTMLDivElement>(null);
+@@ -377,6 +395,9 @@ function ChatScroll({
+       {messages.map((m) => (
+         <MessageBubble key={m.id} message={m} sources={sources[m.id]} />
+       ))}
++      {messages.at(-1)?.role === "user" && (
++        <AgentPendingBubble slow={!awaitingReply} />
++      )}
+       <div ref={endRef} />
+     </div>
+   );
+@@ -406,7 +427,11 @@ export function MessageBubble({
              : "bg-card/50",
          )}
        >
@@ -385,7 +534,7 @@ index 5c57732..c8853cf 100644
          {!isUser && sources && sources.length > 0 && (
            <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
              <span className="mr-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-@@ -445,8 +451,15 @@ function Composer({
+@@ -445,8 +470,15 @@ function Composer({
    const [sendError, setSendError] = useState<string | null>(null);
  
    const send = useMutation({
@@ -403,7 +552,7 @@ index 5c57732..c8853cf 100644
      onMutate: async ({ content, retry }) => {
        await qc.cancelQueries({
          queryKey: queryKeys.agent.messages(activeId!),
-@@ -536,8 +549,8 @@ function Composer({
+@@ -536,8 +568,8 @@ function Composer({
          className="min-h-9 resize-none border-0 bg-transparent px-3 pt-2.5 shadow-none focus-visible:ring-0"
          autoFocus
        />
@@ -414,7 +563,7 @@ index 5c57732..c8853cf 100644
        <div className="flex items-center gap-1 px-1.5 pb-1.5">
          <Button
            size="icon-sm"
-@@ -548,15 +561,17 @@ function Composer({
+@@ -548,15 +580,17 @@ function Composer({
          >
            <AtSignIcon className="size-4" strokeWidth={1.5} />
          </Button>

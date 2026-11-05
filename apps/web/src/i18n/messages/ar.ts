@@ -19,6 +19,8 @@ const messages = {
   "agent.disclaimer": "المحتوى مُنتج بواسطة الذكاء الاصطناعي وهو للرجوع إليه فقط",
   "agent.mention": "@ إشارة",
   "agent.skills": "المهارات",
+  "agent.pending": "المساعد يُعدّ الردًا",
+  "agent.stillProcessing": "ما يزال قيد المعالجة",
   "agent.skill.dailyInsight.label": "معرفة اليوم",
   "agent.skill.dailyInsight.desc": "من نقطة كتبتها، توسّع فكرة جديدة لم تكتبها بعد",
   "agent.skill.behaviorPattern.label": "نمط السلوك",
