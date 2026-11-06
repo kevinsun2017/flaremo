@@ -600,7 +600,7 @@ export function MessageBubble({
     >
       <div
         className={cn(
-          "max-w-[85%] rounded-xl border border-border/50 p-3 text-sm shadow-xs",
+          "max-w-[85%] max-md:max-w-[92%] rounded-xl border border-border/50 p-3 text-sm shadow-xs",
           isUser
             ? "border-primary/30 bg-primary/10 text-foreground"
             : "bg-card/50",
