@@ -230,6 +230,7 @@ const messages = {
   "common.close": "Fermer",
   "common.download": "Télécharger",
   "common.retry": "Réessayer",
+  "common.renderFallback": "Échec du rendu du contenu ; texte brut affiché",
   "common.edit": "Modifier",
   "common.delete": "Supprimer",
   "common.restore": "Restaurer",

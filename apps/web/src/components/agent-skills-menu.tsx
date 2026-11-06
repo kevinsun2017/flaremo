@@ -1,7 +1,9 @@
-import { AGENT_SKILL_LIST, type AgentSkill, type AgentSkillId } from "@flaremo/contracts";
+import {
+  AGENT_SKILL_LIST,
+  type AgentSkill,
+  type AgentSkillId,
+} from "@flaremo/contracts";
 import { PuzzleIcon } from "lucide-react";
-import { useI18n } from "@/i18n";
-import type { TranslationKey } from "@/i18n/key";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,20 +13,47 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useI18n } from "@/i18n";
+import type { TranslationKey } from "@/i18n/key";
+import { cn } from "@/lib/utils";
 
 /**
  * 技能的界面文案映射。放在 web 侧而非 contracts：服务端只关心 id、取数方式与注入
  * 模型的指令，locale 目录才是 UI 文案的真源。satisfies 保证漏翻译会编译失败。
  */
 export const AGENT_SKILL_KEYS = {
-  "daily-insight": { label: "agent.skill.dailyInsight.label", desc: "agent.skill.dailyInsight.desc" },
-  "behavior-pattern": { label: "agent.skill.behaviorPattern.label", desc: "agent.skill.behaviorPattern.desc" },
-  reframe: { label: "agent.skill.reframe.label", desc: "agent.skill.reframe.desc" },
-  "yesterday-dream": { label: "agent.skill.yesterdayDream.label", desc: "agent.skill.yesterdayDream.desc" },
-  "book-mirror": { label: "agent.skill.bookMirror.label", desc: "agent.skill.bookMirror.desc" },
-  "echo-of-then": { label: "agent.skill.echoOfThen.label", desc: "agent.skill.echoOfThen.desc" },
-  "on-this-day": { label: "agent.skill.onThisDay.label", desc: "agent.skill.onThisDay.desc" },
-} as const satisfies Record<AgentSkillId, { label: TranslationKey; desc: TranslationKey }>;
+  "daily-insight": {
+    label: "agent.skill.dailyInsight.label",
+    desc: "agent.skill.dailyInsight.desc",
+  },
+  "behavior-pattern": {
+    label: "agent.skill.behaviorPattern.label",
+    desc: "agent.skill.behaviorPattern.desc",
+  },
+  reframe: {
+    label: "agent.skill.reframe.label",
+    desc: "agent.skill.reframe.desc",
+  },
+  "yesterday-dream": {
+    label: "agent.skill.yesterdayDream.label",
+    desc: "agent.skill.yesterdayDream.desc",
+  },
+  "book-mirror": {
+    label: "agent.skill.bookMirror.label",
+    desc: "agent.skill.bookMirror.desc",
+  },
+  "echo-of-then": {
+    label: "agent.skill.echoOfThen.label",
+    desc: "agent.skill.echoOfThen.desc",
+  },
+  "on-this-day": {
+    label: "agent.skill.onThisDay.label",
+    desc: "agent.skill.onThisDay.desc",
+  },
+} as const satisfies Record<
+  AgentSkillId,
+  { label: TranslationKey; desc: TranslationKey }
+>;
 
 /**
  * 「技能」菜单，对齐 flomo Agent。选中后：用户消息只放技能名（短，不污染 RAG 召回），
@@ -33,9 +62,12 @@ export const AGENT_SKILL_KEYS = {
 export function AgentSkillsMenu({
   onSelect,
   disabled,
+  isMobile,
 }: {
   onSelect: (skill: AgentSkill) => void;
   disabled?: boolean;
+  /** Mobile: bump the trigger to a ≥44px touch target (flomo sheet). */
+  isMobile?: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -44,7 +76,10 @@ export function AgentSkillsMenu({
         render={
           <Button
             aria-label={t("agent.skills")}
-            className="text-muted-foreground hover:text-foreground"
+            className={cn(
+              "text-muted-foreground hover:text-foreground",
+              isMobile && "size-11",
+            )}
             disabled={disabled}
             size="icon-sm"
             title={t("agent.skills")}

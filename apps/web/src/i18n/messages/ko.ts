@@ -227,6 +227,7 @@ const messages = {
   "common.close": "닫기",
   "common.download": "다운로드",
   "common.retry": "재시도",
+  "common.renderFallback": "콘텐츠 렌더링에 실패하여 일반 텍스트로 표시합니다",
   "common.edit": "편집",
   "common.delete": "삭제",
   "common.restore": "복원",

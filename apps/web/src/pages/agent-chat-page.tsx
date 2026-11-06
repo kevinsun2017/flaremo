@@ -1,3 +1,4 @@
+import type { AgentSkillId } from "@flaremo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -5,28 +6,31 @@ import {
   AtSignIcon,
   BookOpenTextIcon,
   BotIcon,
-  MoreHorizontalIcon,
   ChevronDownIcon,
+  ClockIcon,
   ImageIcon,
+  MoreHorizontalIcon,
   PanelRightIcon,
   PlusIcon,
   RefreshCwIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
+  type AgentChatMessage,
   createConversation,
   listConversations,
   listMessages,
   sendMessage,
-  type AgentChatMessage,
 } from "@/api";
-import type { AgentSkillId } from "@flaremo/contracts";
 import { ApiError } from "@/api/client";
-import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
 import { AgentPendingBubble } from "@/components/agent-pending-bubble";
+import {
+  AGENT_SKILL_KEYS,
+  AgentSkillsMenu,
+} from "@/components/agent-skills-menu";
 import { LazyMemoContent } from "@/components/lazy-memo-content";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +46,25 @@ import { useI18n } from "@/i18n";
 import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
+/** Mobile = below the workspace desktop breakpoint (768px). The Agent page
+ *  switches to a flomo-style full-screen sheet on phones so the keyboard and
+ *  gesture affordances match a native app; the floating panel stays on desktop. */
+const MOBILE_QUERY = "(max-width: 767px)";
+
+function subscribeMobile(onChange: () => void) {
+  const mql = window.matchMedia(MOBILE_QUERY);
+  mql.addEventListener("change", onChange);
+  return () => mql.removeEventListener("change", onChange);
+}
+
+function useIsMobile() {
+  return useSyncExternalStore(
+    subscribeMobile,
+    () => window.matchMedia(MOBILE_QUERY).matches,
+    () => false, // SSR default: desktop-ish so the floating bubble is the first paint.
+  );
+}
+
 /**
  * flomo-style Agent chat, rendered as a floating bubble in the bottom-right
  * corner (workspace only). Clicking the bubble opens a compact popover with a
@@ -52,6 +75,7 @@ import { cn } from "@/lib/utils";
  */
 export function AgentChatDialog() {
   const { t } = useI18n();
+  const isMobile = useIsMobile();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -92,6 +116,76 @@ export function AgentChatDialog() {
   const [sources, setSources] = useState<Record<string, string[]>>({});
   const [awaitingReply, setAwaitingReply] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef<{ y: number; scrollTop: number } | null>(null);
+
+  // Mobile: pull-down-to-close the full-screen sheet. Only armed when the chat
+  // list is scrolled to the top, so it never fights the chat scroll itself.
+  // The sheet's scroll area uses `overscroll-behavior-contain` so the browser's
+  // own pull-to-refresh is not triggered by the same gesture.
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const scrollEl = el.querySelector<HTMLElement>("[data-agent-scroll]");
+    const onTouchStart = (e: TouchEvent) => {
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      if (scrollTop > 0) {
+        touchStartRef.current = null;
+        return;
+      }
+      touchStartRef.current = { y: e.touches[0]?.clientY ?? 0, scrollTop };
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touchStartRef.current) return;
+      const dy = (e.touches[0]?.clientY ?? 0) - touchStartRef.current.y;
+      // Pull down beyond ~64px (loose threshold) closes the sheet.
+      if (dy > 64) {
+        const start = touchStartRef.current;
+        touchStartRef.current = null;
+        const didClose = start.scrollTop <= 0;
+        if (didClose) setOpen(false);
+        return;
+      }
+    };
+    const onTouchEnd = () => {
+      touchStartRef.current = null;
+    };
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [isMobile, open]);
+
+  // Mobile: keep the composer visible above the virtual keyboard. Some mobile
+  // browsers keep the layout viewport fixed while the visual viewport shrinks,
+  // which would cover the input; the sheet stays `inset-0` full-screen and we
+  // scroll the composer into view so the keyboard never hides the field.
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    const vv = window.visualViewport;
+    const el = panelRef.current;
+    if (!vv || !el) return;
+    const onResize = () => {
+      requestAnimationFrame(() => {
+        const composer = el.querySelector<HTMLElement>("[data-agent-composer]");
+        composer?.scrollIntoView({
+          block: "end",
+          behavior: "instant" as ScrollBehavior,
+        });
+      });
+    };
+    vv.addEventListener("resize", onResize);
+    // Also reposition when the field gains focus (keyboard animation timing).
+    el.addEventListener("focusin", onResize);
+    return () => {
+      vv.removeEventListener("resize", onResize);
+      el.removeEventListener("focusin", onResize);
+    };
+  }, [isMobile, open]);
 
   const conversations = useQuery({
     queryKey: queryKeys.agent.conversations,
@@ -135,7 +229,11 @@ export function AgentChatDialog() {
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       const bubble = document.querySelector<HTMLElement>("[data-agent-bubble]");
-      if (panelRef.current && !panelRef.current.contains(target) && !bubble?.contains(target)) {
+      if (
+        panelRef.current &&
+        !panelRef.current.contains(target) &&
+        !bubble?.contains(target)
+      ) {
         setOpen(false);
       }
     };
@@ -165,8 +263,7 @@ export function AgentChatDialog() {
 
   // 可见性由内容驱动：最后一条是 user 就是还在等回复。快轮询的 60 秒兜底只停快轮询，
   // 这里接着慢轮询，气泡因此不会凭空消失（超时会降级成「仍在处理」）。
-  const pendingReply =
-    (messages.data?.messages ?? []).at(-1)?.role === "user";
+  const pendingReply = (messages.data?.messages ?? []).at(-1)?.role === "user";
   useEffect(() => {
     if (!open || !activeId || awaitingReply || !pendingReply) return;
     const slow = setInterval(() => {
@@ -203,72 +300,140 @@ export function AgentChatDialog() {
           aria-label={t("agent.title")}
           className={cn(
             "z-50 flex flex-col overflow-hidden border border-border/60 bg-background shadow-2xl",
-            docked
-              ? "fixed right-0 top-0 h-svh w-[380px] max-w-[calc(100vw-3rem)] rounded-none border-r-0"
-              : "fixed bottom-20 right-6 h-[560px] w-[380px] max-w-[calc(100vw-3rem)] rounded-2xl",
+            isMobile
+              ? // flomo-style full-screen sheet on phones; borderless, edge to edge.
+                "fixed inset-0 rounded-none border-0"
+              : docked
+                ? "fixed right-0 top-0 h-svh w-[380px] max-w-[calc(100vw-3rem)] rounded-none border-r-0"
+                : "fixed bottom-20 right-6 h-[560px] w-[380px] max-w-[calc(100vw-3rem)] rounded-2xl",
           )}
         >
-          {/* Header */}
-          <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
-            <button
-              type="button"
-              onClick={() => setAgentMenuOpen((v) => !v)}
-              className="flex items-center gap-1 text-sm font-semibold"
-            >
-              <BotIcon className="size-5 text-primary" />
-              {t("agent.title")}
-              <ChevronDownIcon className={cn("size-4 transition-transform", agentMenuOpen && "rotate-180")} />
-            </button>
-            <div className="flex-1" />
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button size="icon-sm" variant="ghost" aria-label="menu">
-                    <MoreHorizontalIcon />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={startNew} disabled={create.isPending}>
-                  {t("agent.newConversation")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => toast.info(t("agent.manage"))}>
-                  {t("agent.manage")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setDocked(false)}>
-                  {t("agent.restoreSize")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              onClick={() => setDocked((v) => !v)}
-              aria-label={t("agent.dockToggle")}
-              title={t("agent.dockToggle")}
-            >
-              <PanelRightIcon />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              onClick={() => setOpen(false)}
-              aria-label={t("agent.close")}
-            >
-              <XIcon />
-            </Button>
-          </div>
+          {/* Header. Mobile: flomo-style full-screen bar (X close / title /
+              history clock, ≥44px touch targets). Desktop: the floating panel
+              header with menu, dock toggle and close. */}
+          {isMobile ? (
+            <div className="flex items-center gap-2 border-b border-border/60 px-2 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setOpen(false)}
+                aria-label={t("agent.close")}
+                className="size-11"
+              >
+                <XIcon className="size-5" />
+              </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuTab("chat");
+                  setAgentMenuOpen((v) => !v);
+                }}
+                className="flex flex-1 items-center gap-1 text-base font-semibold"
+              >
+                <BotIcon className="size-5 shrink-0 text-primary" />
+                <span className="truncate">{t("agent.title")}</span>
+                <ChevronDownIcon
+                  className={cn(
+                    "size-4 shrink-0 transition-transform",
+                    agentMenuOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => {
+                  setMenuTab("tasks");
+                  setAgentMenuOpen((v) => !v);
+                }}
+                aria-label={t("agent.tabTasks")}
+                className="size-11"
+              >
+                <ClockIcon className="size-5" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setAgentMenuOpen((v) => !v)}
+                className="flex items-center gap-1 text-sm font-semibold"
+              >
+                <BotIcon className="size-5 text-primary" />
+                {t("agent.title")}
+                <ChevronDownIcon
+                  className={cn(
+                    "size-4 transition-transform",
+                    agentMenuOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              <div className="flex-1" />
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button size="icon-sm" variant="ghost" aria-label="menu">
+                      <MoreHorizontalIcon />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={startNew}
+                    disabled={create.isPending}
+                  >
+                    {t("agent.newConversation")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => toast.info(t("agent.manage"))}
+                  >
+                    {t("agent.manage")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDocked(false)}>
+                    {t("agent.restoreSize")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => setDocked((v) => !v)}
+                aria-label={t("agent.dockToggle")}
+                title={t("agent.dockToggle")}
+              >
+                <PanelRightIcon />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => setOpen(false)}
+                aria-label={t("agent.close")}
+              >
+                <XIcon />
+              </Button>
+            </div>
+          )}
 
           {/* Agent ∨ dropdown card */}
           {agentMenuOpen && (
-            <div data-agent-menu className="absolute left-4 top-14 z-50 w-full max-w-[calc(100%-2rem)] rounded-xl border border-border/60 bg-popover p-2 shadow-xl">
+            <div
+              data-agent-menu
+              className={cn(
+                "absolute left-4 z-50 w-full max-w-[calc(100%-2rem)] rounded-xl border border-border/60 bg-popover p-2 shadow-xl",
+                isMobile
+                  ? "top-[calc(env(safe-area-inset-top)+3.25rem)] max-h-[calc(100dvh-6rem)] overflow-y-auto"
+                  : "top-14",
+              )}
+            >
               <div className="mb-2 flex rounded-lg bg-muted p-1">
                 <button
                   type="button"
                   onClick={() => setMenuTab("chat")}
                   className={cn(
                     "flex-1 rounded-md px-3 py-1.5 text-sm",
-                    menuTab === "chat" ? "bg-background shadow-sm" : "text-muted-foreground",
+                    menuTab === "chat"
+                      ? "bg-background shadow-sm"
+                      : "text-muted-foreground",
                   )}
                 >
                   {t("agent.tabChat")}
@@ -278,7 +443,9 @@ export function AgentChatDialog() {
                   onClick={() => setMenuTab("tasks")}
                   className={cn(
                     "flex-1 rounded-md px-3 py-1.5 text-sm",
-                    menuTab === "tasks" ? "bg-background shadow-sm" : "text-muted-foreground",
+                    menuTab === "tasks"
+                      ? "bg-background shadow-sm"
+                      : "text-muted-foreground",
                   )}
                 >
                   {t("agent.tabTasks")}
@@ -286,24 +453,28 @@ export function AgentChatDialog() {
               </div>
               {menuTab === "chat" ? (
                 <div className="max-h-60 overflow-y-auto">
-                  {((conversations.data?.conversations ?? []).filter((c) => !/^async smoke/i.test(c.title))).length === 0 ? (
+                  {(conversations.data?.conversations ?? []).filter(
+                    (c) => !/^async smoke/i.test(c.title),
+                  ).length === 0 ? (
                     <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                       {t("agent.noHistory")}
                     </div>
                   ) : (
-                    (conversations.data?.conversations ?? []).filter((c) => !/^async smoke/i.test(c.title)).map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => {
-                          setActiveId(c.id);
-                          setAgentMenuOpen(false);
-                        }}
-                        className="block w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
-                      >
-                        {c.title}
-                      </button>
-                    ))
+                    (conversations.data?.conversations ?? [])
+                      .filter((c) => !/^async smoke/i.test(c.title))
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveId(c.id);
+                            setAgentMenuOpen(false);
+                          }}
+                          className="block w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
+                        >
+                          {c.title}
+                        </button>
+                      ))
                   )}
                 </div>
               ) : (
@@ -324,8 +495,17 @@ export function AgentChatDialog() {
           />
 
           {/* Composer */}
-          <div className="border-t border-border/60 p-3">
+          <div
+            data-agent-composer
+            className={cn(
+              "border-t border-border/60",
+              isMobile
+                ? "p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]"
+                : "p-3",
+            )}
+          >
             <Composer
+              isMobile={isMobile}
               activeId={activeId}
               onSent={() => setAwaitingReply(true)}
               onCreated={(id) =>
@@ -336,7 +516,6 @@ export function AgentChatDialog() {
               {t("agent.disclaimer")}
             </p>
           </div>
-
         </div>
       )}
     </>
@@ -391,7 +570,10 @@ function ChatScroll({
     );
   }
   return (
-    <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+    <div
+      data-agent-scroll
+      className="flex-1 space-y-3 overflow-y-auto overscroll-behavior-contain px-4 py-4"
+    >
       {messages.map((m) => (
         <MessageBubble key={m.id} message={m} sources={sources[m.id]} />
       ))}
@@ -414,10 +596,7 @@ export function MessageBubble({
   const isUser = message.role === "user";
   return (
     <div
-      className={cn(
-        "flex w-full",
-        isUser ? "justify-end" : "justify-start",
-      )}
+      className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
       <div
         className={cn(
@@ -430,7 +609,10 @@ export function MessageBubble({
         {isUser ? (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         ) : (
-          <LazyMemoContent className="break-words text-sm leading-6" content={message.content} />
+          <LazyMemoContent
+            className="break-words text-sm leading-6"
+            content={message.content}
+          />
         )}
         {!isUser && sources && sources.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
@@ -459,10 +641,12 @@ function Composer({
   activeId,
   onCreated,
   onSent,
+  isMobile,
 }: {
   activeId: string | null;
   onCreated: (id: string) => void;
   onSent: () => void;
+  isMobile: boolean;
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -525,7 +709,8 @@ function Composer({
       if (ctx?.prev) {
         qc.setQueryData(ctx.queryKey as string[], ctx.prev);
       }
-      const msg = error instanceof ApiError ? error.message : t("agent.sendFailed");
+      const msg =
+        error instanceof ApiError ? error.message : t("agent.sendFailed");
       setSendError(msg);
       toast.error(msg);
     },
@@ -577,13 +762,17 @@ function Composer({
         <Button
           size="icon-sm"
           variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
+          className={cn(
+            "text-muted-foreground hover:text-foreground",
+            isMobile && "size-11",
+          )}
           aria-label={t("agent.mention")}
           title={t("agent.mention")}
         >
           <AtSignIcon className="size-4" strokeWidth={1.5} />
         </Button>
         <AgentSkillsMenu
+          isMobile={isMobile}
           disabled={send.isPending}
           onSelect={(skill) => {
             setSendError(null);
@@ -597,7 +786,10 @@ function Composer({
         <Button
           size="icon-sm"
           variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
+          className={cn(
+            "text-muted-foreground hover:text-foreground",
+            isMobile && "size-11",
+          )}
           aria-label={t("agent.attachImage")}
           title={t("agent.attachImage")}
         >
@@ -611,7 +803,10 @@ function Composer({
             <Button
               size="icon-sm"
               variant="default"
-              className="bg-emerald-500 text-white hover:bg-emerald-600"
+              className={cn(
+                "bg-emerald-500 text-white hover:bg-emerald-600",
+                isMobile && "size-11",
+              )}
               onClick={retry}
               aria-label={t("agent.retry")}
             >
@@ -626,6 +821,7 @@ function Composer({
           variant={canSend ? "default" : "secondary"}
           className={cn(
             "size-8 rounded-full",
+            isMobile && "size-11",
             canSend
               ? "bg-emerald-500 text-white hover:bg-emerald-600"
               : "bg-muted text-muted-foreground hover:bg-muted",
