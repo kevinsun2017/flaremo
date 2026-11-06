@@ -225,6 +225,7 @@ const messages = {
   "common.close": "閉じる",
   "common.download": "ダウンロード",
   "common.retry": "再試行",
+  "common.renderFallback": "コンテンツの描画に失敗しました。プレーンテキストで表示しています",
   "common.edit": "編集",
   "common.delete": "削除",
   "common.restore": "復元",

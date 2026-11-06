@@ -1,4 +1,6 @@
+import { TriangleAlertIcon } from "lucide-react";
 import { Component, lazy, memo, type ReactNode, Suspense } from "react";
+import { useI18n } from "@/i18n";
 
 const MarkdownMemoContent = lazy(() =>
   import("./memo-content").then((module) => ({ default: module.MemoContent })),
@@ -14,6 +16,35 @@ function PlainMemoContent({
   return (
     <div className={className ?? "text-[15px] leading-7 whitespace-pre-wrap"}>
       {content}
+    </div>
+  );
+}
+
+/** Visible marker for the failed-degradation path: the lazy markdown chunk did
+ *  not load (offline cold cache, stale deploy, build error, …). Notes stay
+ *  readable as plain text, but the reader should know the rich rendering was
+ *  skipped instead of assuming this is the formatted output. */
+function DegradedNotice() {
+  const { t } = useI18n();
+  return (
+    <div className="mb-2 flex items-center gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-warning-emphasis">
+      <TriangleAlertIcon className="size-3.5 shrink-0" />
+      <span>{t("common.renderFallback")}</span>
+    </div>
+  );
+}
+
+export function FallbackContent({
+  className,
+  content,
+}: {
+  className?: string;
+  content: string;
+}) {
+  return (
+    <div>
+      <DegradedNotice />
+      <PlainMemoContent className={className} content={content} />
     </div>
   );
 }
@@ -68,7 +99,7 @@ export const LazyMemoContent = memo(function LazyMemoContent({
 }) {
   return (
     <MemoContentErrorBoundary
-      fallback={<PlainMemoContent className={className} content={content} />}
+      fallback={<FallbackContent className={className} content={content} />}
     >
       <Suspense
         fallback={<PlainMemoContent className={className} content={content} />}

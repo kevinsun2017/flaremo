@@ -21,7 +21,8 @@ const messages = {
   "agent.pending": "助手正在生成回复",
   "agent.stillProcessing": "仍在处理",
   "agent.skill.dailyInsight.label": "每日新知",
-  "agent.skill.dailyInsight.desc": "从你写过的某个点，延伸一条你还没记过的新知识",
+  "agent.skill.dailyInsight.desc":
+    "从你写过的某个点，延伸一条你还没记过的新知识",
   "agent.skill.behaviorPattern.label": "行为洞察",
   "agent.skill.behaviorPattern.desc": "照出你反复出现、却没察觉的默认动作",
   "agent.skill.reframe.label": "幸福灵药",
@@ -167,9 +168,12 @@ const messages = {
   "agentModel.saved": "模型配置已保存。",
   "agentModel.deleted": "模型配置已清除，使用环境变量。",
   "agentModel.clearConfig": "清除模型配置",
-  "agentModel.clearConfirm": "确定要清除 Agent 模型配置吗？清除后将回退到部署环境变量。",
-  "agentModel.envManaged": "当前由部署环境变量（FLAREMO_LLM_*）管理。保存此处配置可覆盖它。",
-  "agentModel.plainStore": "未设置加密密钥，配置以明文存储于数据库（D1 静态加密）。建议设置 FLAREMO_AGENT_MODEL_CONFIG_KEY。",
+  "agentModel.clearConfirm":
+    "确定要清除 Agent 模型配置吗？清除后将回退到部署环境变量。",
+  "agentModel.envManaged":
+    "当前由部署环境变量（FLAREMO_LLM_*）管理。保存此处配置可覆盖它。",
+  "agentModel.plainStore":
+    "未设置加密密钥，配置以明文存储于数据库（D1 静态加密）。建议设置 FLAREMO_AGENT_MODEL_CONFIG_KEY。",
   "agentModel.unreadable": "存储的配置无法解密（密钥不匹配），请重新保存。",
   "agentModel.configStatus": "模型",
   "agentModel.statusConfigured": "已配置",
@@ -183,9 +187,11 @@ const messages = {
   "agentModel.modelRemove": "移除该模型",
   "agentModel.modelCurrent": "当前",
   "agentModel.modelSetCurrent": "设为当前",
-  "agentModel.modelListEmpty": "尚未添加自定义模型。点「获取模型列表」或手动输入模型 ID 添加。",
+  "agentModel.modelListEmpty":
+    "尚未添加自定义模型。点「获取模型列表」或手动输入模型 ID 添加。",
   "agentModel.fetchDialogTitle": "选择要添加的模型",
-  "agentModel.fetchDialogDesc": "从模型服务商拉取列表，勾选要加入的模型（已在列表中的会自动去重）。",
+  "agentModel.fetchDialogDesc":
+    "从模型服务商拉取列表，勾选要加入的模型（已在列表中的会自动去重）。",
   "agentModel.fetchError": "获取模型列表失败，请检查 API Base URL 和 API Key。",
   "agentModel.fetchEmpty": "点击「获取模型列表」从服务商拉取可用的模型。",
   "agentModel.fetchCount": "已选中 {count} 个",
@@ -193,7 +199,8 @@ const messages = {
   "agentModel.fetchSelectAll": "全选",
   "agentModel.fetchDeselectAll": "全不选",
   "agentModel.removeAll": "删除所有模型",
-  "agentModel.removeAllConfirm": "确定要删除所有模型吗？需重新添加才能再次选用。",
+  "agentModel.removeAllConfirm":
+    "确定要删除所有模型吗？需重新添加才能再次选用。",
   "common.search": "搜索",
   "search.placeholder": "搜索记录…",
   "search.semanticPlaceholder": "找一找：用自然语言描述…",
@@ -218,6 +225,7 @@ const messages = {
   "common.close": "关闭",
   "common.download": "下载",
   "common.retry": "重试",
+  "common.renderFallback": "内容渲染失败，已显示纯文本",
   "common.edit": "编辑",
   "common.delete": "删除",
   "common.restore": "恢复",

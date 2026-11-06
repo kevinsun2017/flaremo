@@ -228,6 +228,7 @@ const messages = {
   "common.close": "Закрыть",
   "common.download": "Скачать",
   "common.retry": "Повторить",
+  "common.renderFallback": "Не удалось отобразить содержимое; показан обычный текст",
   "common.edit": "Изменить",
   "common.delete": "Удалить",
   "common.restore": "Восстановить",

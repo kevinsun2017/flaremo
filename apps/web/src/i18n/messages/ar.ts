@@ -224,6 +224,7 @@ const messages = {
   "common.close": "إغلاق",
   "common.download": "تنزيل",
   "common.retry": "إعادة المحاولة",
+  "common.renderFallback": "فشل عرض المحتوى؛ يتم عرض النص العادي",
   "common.edit": "تعديل",
   "common.delete": "حذف",
   "common.restore": "استعادة",

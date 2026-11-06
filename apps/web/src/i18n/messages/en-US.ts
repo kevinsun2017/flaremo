@@ -226,6 +226,7 @@ const messages = {
   "common.close": "Close",
   "common.download": "Download",
   "common.retry": "Retry",
+  "common.renderFallback": "Content failed to render; showing plain text",
   "common.edit": "Edit",
   "common.delete": "Delete",
   "common.restore": "Restore",
