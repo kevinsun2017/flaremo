@@ -1,0 +1,973 @@
+From ae3fe08e0a895ff3398ee0812730d3f9d561a9a3 Mon Sep 17 00:00:00 2001
+From: kevinsun2017 <wallymoltxv3-bot@openclaw.ai>
+Date: Fri, 6 Nov 2026 11:56:58 +0800
+Subject: [PATCH] =?UTF-8?q?fix(agent):=20=E7=A7=BB=E5=8A=A8=E7=AB=AF=20flo?=
+ =?UTF-8?q?mo=20=E5=BC=8F=E5=85=A8=E5=B1=8F=E9=A1=B5=20+=20=E6=87=92?=
+ =?UTF-8?q?=E5=8A=A0=E8=BD=BD=E9=99=8D=E7=BA=A7=E5=8F=AF=E8=A7=81=E5=8C=96?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+(d) 手机上 Agent 改 flomo 式全屏页：
+- useSyncExternalStore + matchMedia 断点，手机(<768px)面板转全屏无边框 sheet
+- 头部 X 关闭 / 标题(开 chat tab) / 时钟(开 history tab)，≥44px 触控目标
+- 下滑关闭(滚动到顶 + dy>64 才关)、visualViewport 键盘防遮(scrollIntoView composer)
+- overscroll-behavior-contain 防下拉刷新冲突、safe-area-inset 底边距、viewport-fit=cover
+- 工具栏按钮(@ / 技能 / 图片 / retry / 发送)手机下 size-11 ≥44px
+- 桌面保留原 docked/浮窗面板
+
+(b) 懒加载降级可见化：
+- DegradedNotice 提示条 + FallbackContent(提示+纯文本) 导出
+- ErrorBoundary 真失败→带提示降级；Suspense 加载中仍静默
+- 8 份 locale 加 common.renderFallback
+
+验证：web typecheck 通过、web 单测 406/407(唯一失败为既有 dev-proxy-parity)、全仓 typecheck 绿、vite build 成功
+---
+ apps/web/index.html                           |   2 +-
+ apps/web/src/components/agent-skills-menu.tsx |  59 ++-
+ .../src/components/lazy-memo-content.test.tsx |  36 ++
+ apps/web/src/components/lazy-memo-content.tsx |  33 +-
+ apps/web/src/i18n/messages/ar.ts              |   1 +
+ apps/web/src/i18n/messages/en-US.ts           |   1 +
+ apps/web/src/i18n/messages/es.ts              |   1 +
+ apps/web/src/i18n/messages/fr.ts              |   1 +
+ apps/web/src/i18n/messages/ja.ts              |   1 +
+ apps/web/src/i18n/messages/ko.ts              |   1 +
+ apps/web/src/i18n/messages/ru.ts              |   1 +
+ apps/web/src/i18n/messages/zh-CN.ts           |  22 +-
+ apps/web/src/pages/agent-chat-page.tsx        | 378 +++++++++++++-----
+ 13 files changed, 425 insertions(+), 112 deletions(-)
+ create mode 100644 apps/web/src/components/lazy-memo-content.test.tsx
+
+diff --git a/apps/web/index.html b/apps/web/index.html
+index 3313097..e35f75e 100644
+--- a/apps/web/index.html
++++ b/apps/web/index.html
+@@ -2,7 +2,7 @@
+ <html lang="zh-CN">
+   <head>
+     <meta charset="UTF-8" />
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+     <meta name="color-scheme" content="light dark" />
+     <!-- Updated by the bootstrap script below and by ThemeProvider so the
+          browser chrome / iOS status bar tracks the resolved theme. -->
+diff --git a/apps/web/src/components/agent-skills-menu.tsx b/apps/web/src/components/agent-skills-menu.tsx
+index 17ea177..c4405b0 100644
+--- a/apps/web/src/components/agent-skills-menu.tsx
++++ b/apps/web/src/components/agent-skills-menu.tsx
+@@ -1,7 +1,9 @@
+-import { AGENT_SKILL_LIST, type AgentSkill, type AgentSkillId } from "@flaremo/contracts";
++import {
++  AGENT_SKILL_LIST,
++  type AgentSkill,
++  type AgentSkillId,
++} from "@flaremo/contracts";
+ import { PuzzleIcon } from "lucide-react";
+-import { useI18n } from "@/i18n";
+-import type { TranslationKey } from "@/i18n/key";
+ import { Button } from "@/components/ui/button";
+ import {
+   DropdownMenu,
+@@ -11,20 +13,47 @@ import {
+   DropdownMenuSeparator,
+   DropdownMenuTrigger,
+ } from "@/components/ui/dropdown-menu";
++import { useI18n } from "@/i18n";
++import type { TranslationKey } from "@/i18n/key";
++import { cn } from "@/lib/utils";
+ 
+ /**
+  * 技能的界面文案映射。放在 web 侧而非 contracts：服务端只关心 id、取数方式与注入
+  * 模型的指令，locale 目录才是 UI 文案的真源。satisfies 保证漏翻译会编译失败。
+  */
+ export const AGENT_SKILL_KEYS = {
+-  "daily-insight": { label: "agent.skill.dailyInsight.label", desc: "agent.skill.dailyInsight.desc" },
+-  "behavior-pattern": { label: "agent.skill.behaviorPattern.label", desc: "agent.skill.behaviorPattern.desc" },
+-  reframe: { label: "agent.skill.reframe.label", desc: "agent.skill.reframe.desc" },
+-  "yesterday-dream": { label: "agent.skill.yesterdayDream.label", desc: "agent.skill.yesterdayDream.desc" },
+-  "book-mirror": { label: "agent.skill.bookMirror.label", desc: "agent.skill.bookMirror.desc" },
+-  "echo-of-then": { label: "agent.skill.echoOfThen.label", desc: "agent.skill.echoOfThen.desc" },
+-  "on-this-day": { label: "agent.skill.onThisDay.label", desc: "agent.skill.onThisDay.desc" },
+-} as const satisfies Record<AgentSkillId, { label: TranslationKey; desc: TranslationKey }>;
++  "daily-insight": {
++    label: "agent.skill.dailyInsight.label",
++    desc: "agent.skill.dailyInsight.desc",
++  },
++  "behavior-pattern": {
++    label: "agent.skill.behaviorPattern.label",
++    desc: "agent.skill.behaviorPattern.desc",
++  },
++  reframe: {
++    label: "agent.skill.reframe.label",
++    desc: "agent.skill.reframe.desc",
++  },
++  "yesterday-dream": {
++    label: "agent.skill.yesterdayDream.label",
++    desc: "agent.skill.yesterdayDream.desc",
++  },
++  "book-mirror": {
++    label: "agent.skill.bookMirror.label",
++    desc: "agent.skill.bookMirror.desc",
++  },
++  "echo-of-then": {
++    label: "agent.skill.echoOfThen.label",
++    desc: "agent.skill.echoOfThen.desc",
++  },
++  "on-this-day": {
++    label: "agent.skill.onThisDay.label",
++    desc: "agent.skill.onThisDay.desc",
++  },
++} as const satisfies Record<
++  AgentSkillId,
++  { label: TranslationKey; desc: TranslationKey }
++>;
+ 
+ /**
+  * 「技能」菜单，对齐 flomo Agent。选中后：用户消息只放技能名（短，不污染 RAG 召回），
+@@ -33,9 +62,12 @@ export const AGENT_SKILL_KEYS = {
+ export function AgentSkillsMenu({
+   onSelect,
+   disabled,
++  isMobile,
+ }: {
+   onSelect: (skill: AgentSkill) => void;
+   disabled?: boolean;
++  /** Mobile: bump the trigger to a ≥44px touch target (flomo sheet). */
++  isMobile?: boolean;
+ }) {
+   const { t } = useI18n();
+   return (
+@@ -44,7 +76,10 @@ export function AgentSkillsMenu({
+         render={
+           <Button
+             aria-label={t("agent.skills")}
+-            className="text-muted-foreground hover:text-foreground"
++            className={cn(
++              "text-muted-foreground hover:text-foreground",
++              isMobile && "size-11",
++            )}
+             disabled={disabled}
+             size="icon-sm"
+             title={t("agent.skills")}
+diff --git a/apps/web/src/components/lazy-memo-content.test.tsx b/apps/web/src/components/lazy-memo-content.test.tsx
+new file mode 100644
+index 0000000..7798ea2
+--- /dev/null
++++ b/apps/web/src/components/lazy-memo-content.test.tsx
+@@ -0,0 +1,36 @@
++// @vitest-environment jsdom
++import { renderToStaticMarkup } from "react-dom/server";
++import { describe, expect, it, vi } from "vitest";
++
++vi.mock("@/i18n", () => ({
++  useI18n: () => ({ t: (key: string) => key }),
++}));
++
++import { FallbackContent } from "./lazy-memo-content";
++
++describe("LazyMemoContent degraded fallback", () => {
++  it("keeps the raw content readable when the markdown chunk fails", () => {
++    const html = renderToStaticMarkup(
++      <FallbackContent content={"## 标题\n\n**加粗**\n\n正文"} />,
++    );
++    // The plain-text body stays intact (nothing silently dropped).
++    expect(html).toContain("## 标题");
++    expect(html).toContain("**加粗**");
++    expect(html).toContain("正文");
++  });
++
++  it("makes the degradation visible instead of silent", () => {
++    const html = renderToStaticMarkup(<FallbackContent content={"正文"} />);
++    // The rendered key is the i18n marker under test; the notice lives beside
++    // the plain text so a reader can tell rich rendering was skipped.
++    expect(html).toContain("common.renderFallback");
++  });
++
++  it("carries through a caller-provided className on the plain text", () => {
++    const html = renderToStaticMarkup(
++      <FallbackContent className="break-words text-sm" content={"正文"} />,
++    );
++    expect(html).toContain("break-words");
++    expect(html).toContain("text-sm");
++  });
++});
+diff --git a/apps/web/src/components/lazy-memo-content.tsx b/apps/web/src/components/lazy-memo-content.tsx
+index 573c598..7b20059 100644
+--- a/apps/web/src/components/lazy-memo-content.tsx
++++ b/apps/web/src/components/lazy-memo-content.tsx
+@@ -1,4 +1,6 @@
++import { TriangleAlertIcon } from "lucide-react";
+ import { Component, lazy, memo, type ReactNode, Suspense } from "react";
++import { useI18n } from "@/i18n";
+ 
+ const MarkdownMemoContent = lazy(() =>
+   import("./memo-content").then((module) => ({ default: module.MemoContent })),
+@@ -18,6 +20,35 @@ function PlainMemoContent({
+   );
+ }
+ 
++/** Visible marker for the failed-degradation path: the lazy markdown chunk did
++ *  not load (offline cold cache, stale deploy, build error, …). Notes stay
++ *  readable as plain text, but the reader should know the rich rendering was
++ *  skipped instead of assuming this is the formatted output. */
++function DegradedNotice() {
++  const { t } = useI18n();
++  return (
++    <div className="mb-2 flex items-center gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-warning-emphasis">
++      <TriangleAlertIcon className="size-3.5 shrink-0" />
++      <span>{t("common.renderFallback")}</span>
++    </div>
++  );
++}
++
++export function FallbackContent({
++  className,
++  content,
++}: {
++  className?: string;
++  content: string;
++}) {
++  return (
++    <div>
++      <DegradedNotice />
++      <PlainMemoContent className={className} content={content} />
++    </div>
++  );
++}
++
+ /**
+  * The Markdown renderer is a lazy chunk. When it cannot load (offline with a
+  * cold cache, a stale deploy, …) notes must stay readable instead of taking
+@@ -68,7 +99,7 @@ export const LazyMemoContent = memo(function LazyMemoContent({
+ }) {
+   return (
+     <MemoContentErrorBoundary
+-      fallback={<PlainMemoContent className={className} content={content} />}
++      fallback={<FallbackContent className={className} content={content} />}
+     >
+       <Suspense
+         fallback={<PlainMemoContent className={className} content={content} />}
+diff --git a/apps/web/src/i18n/messages/ar.ts b/apps/web/src/i18n/messages/ar.ts
+index 2ef32c7..f60a057 100644
+--- a/apps/web/src/i18n/messages/ar.ts
++++ b/apps/web/src/i18n/messages/ar.ts
+@@ -224,6 +224,7 @@ const messages = {
+   "common.close": "إغلاق",
+   "common.download": "تنزيل",
+   "common.retry": "إعادة المحاولة",
++  "common.renderFallback": "فشل عرض المحتوى؛ يتم عرض النص العادي",
+   "common.edit": "تعديل",
+   "common.delete": "حذف",
+   "common.restore": "استعادة",
+diff --git a/apps/web/src/i18n/messages/en-US.ts b/apps/web/src/i18n/messages/en-US.ts
+index 8edacca..3d16d06 100644
+--- a/apps/web/src/i18n/messages/en-US.ts
++++ b/apps/web/src/i18n/messages/en-US.ts
+@@ -226,6 +226,7 @@ const messages = {
+   "common.close": "Close",
+   "common.download": "Download",
+   "common.retry": "Retry",
++  "common.renderFallback": "Content failed to render; showing plain text",
+   "common.edit": "Edit",
+   "common.delete": "Delete",
+   "common.restore": "Restore",
+diff --git a/apps/web/src/i18n/messages/es.ts b/apps/web/src/i18n/messages/es.ts
+index 4cf3970..a84a214 100644
+--- a/apps/web/src/i18n/messages/es.ts
++++ b/apps/web/src/i18n/messages/es.ts
+@@ -230,6 +230,7 @@ const messages = {
+   "common.close": "Cerrar",
+   "common.download": "Descargar",
+   "common.retry": "Reintentar",
++  "common.renderFallback": "Error al renderizar el contenido; se muestra texto sin formato",
+   "common.edit": "Editar",
+   "common.delete": "Eliminar",
+   "common.restore": "Restaurar",
+diff --git a/apps/web/src/i18n/messages/fr.ts b/apps/web/src/i18n/messages/fr.ts
+index 76c5f32..9a99fed 100644
+--- a/apps/web/src/i18n/messages/fr.ts
++++ b/apps/web/src/i18n/messages/fr.ts
+@@ -230,6 +230,7 @@ const messages = {
+   "common.close": "Fermer",
+   "common.download": "Télécharger",
+   "common.retry": "Réessayer",
++  "common.renderFallback": "Échec du rendu du contenu ; texte brut affiché",
+   "common.edit": "Modifier",
+   "common.delete": "Supprimer",
+   "common.restore": "Restaurer",
+diff --git a/apps/web/src/i18n/messages/ja.ts b/apps/web/src/i18n/messages/ja.ts
+index a9bf409..e550271 100644
+--- a/apps/web/src/i18n/messages/ja.ts
++++ b/apps/web/src/i18n/messages/ja.ts
+@@ -225,6 +225,7 @@ const messages = {
+   "common.close": "閉じる",
+   "common.download": "ダウンロード",
+   "common.retry": "再試行",
++  "common.renderFallback": "コンテンツの描画に失敗しました。プレーンテキストで表示しています",
+   "common.edit": "編集",
+   "common.delete": "削除",
+   "common.restore": "復元",
+diff --git a/apps/web/src/i18n/messages/ko.ts b/apps/web/src/i18n/messages/ko.ts
+index 67f9b22..4e66b8b 100644
+--- a/apps/web/src/i18n/messages/ko.ts
++++ b/apps/web/src/i18n/messages/ko.ts
+@@ -227,6 +227,7 @@ const messages = {
+   "common.close": "닫기",
+   "common.download": "다운로드",
+   "common.retry": "재시도",
++  "common.renderFallback": "콘텐츠 렌더링에 실패하여 일반 텍스트로 표시합니다",
+   "common.edit": "편집",
+   "common.delete": "삭제",
+   "common.restore": "복원",
+diff --git a/apps/web/src/i18n/messages/ru.ts b/apps/web/src/i18n/messages/ru.ts
+index 5401de5..33c8e24 100644
+--- a/apps/web/src/i18n/messages/ru.ts
++++ b/apps/web/src/i18n/messages/ru.ts
+@@ -228,6 +228,7 @@ const messages = {
+   "common.close": "Закрыть",
+   "common.download": "Скачать",
+   "common.retry": "Повторить",
++  "common.renderFallback": "Не удалось отобразить содержимое; показан обычный текст",
+   "common.edit": "Изменить",
+   "common.delete": "Удалить",
+   "common.restore": "Восстановить",
+diff --git a/apps/web/src/i18n/messages/zh-CN.ts b/apps/web/src/i18n/messages/zh-CN.ts
+index a9e0b54..8fac0bd 100644
+--- a/apps/web/src/i18n/messages/zh-CN.ts
++++ b/apps/web/src/i18n/messages/zh-CN.ts
+@@ -21,7 +21,8 @@ const messages = {
+   "agent.pending": "助手正在生成回复",
+   "agent.stillProcessing": "仍在处理",
+   "agent.skill.dailyInsight.label": "每日新知",
+-  "agent.skill.dailyInsight.desc": "从你写过的某个点，延伸一条你还没记过的新知识",
++  "agent.skill.dailyInsight.desc":
++    "从你写过的某个点，延伸一条你还没记过的新知识",
+   "agent.skill.behaviorPattern.label": "行为洞察",
+   "agent.skill.behaviorPattern.desc": "照出你反复出现、却没察觉的默认动作",
+   "agent.skill.reframe.label": "幸福灵药",
+@@ -167,9 +168,12 @@ const messages = {
+   "agentModel.saved": "模型配置已保存。",
+   "agentModel.deleted": "模型配置已清除，使用环境变量。",
+   "agentModel.clearConfig": "清除模型配置",
+-  "agentModel.clearConfirm": "确定要清除 Agent 模型配置吗？清除后将回退到部署环境变量。",
+-  "agentModel.envManaged": "当前由部署环境变量（FLAREMO_LLM_*）管理。保存此处配置可覆盖它。",
+-  "agentModel.plainStore": "未设置加密密钥，配置以明文存储于数据库（D1 静态加密）。建议设置 FLAREMO_AGENT_MODEL_CONFIG_KEY。",
++  "agentModel.clearConfirm":
++    "确定要清除 Agent 模型配置吗？清除后将回退到部署环境变量。",
++  "agentModel.envManaged":
++    "当前由部署环境变量（FLAREMO_LLM_*）管理。保存此处配置可覆盖它。",
++  "agentModel.plainStore":
++    "未设置加密密钥，配置以明文存储于数据库（D1 静态加密）。建议设置 FLAREMO_AGENT_MODEL_CONFIG_KEY。",
+   "agentModel.unreadable": "存储的配置无法解密（密钥不匹配），请重新保存。",
+   "agentModel.configStatus": "模型",
+   "agentModel.statusConfigured": "已配置",
+@@ -183,9 +187,11 @@ const messages = {
+   "agentModel.modelRemove": "移除该模型",
+   "agentModel.modelCurrent": "当前",
+   "agentModel.modelSetCurrent": "设为当前",
+-  "agentModel.modelListEmpty": "尚未添加自定义模型。点「获取模型列表」或手动输入模型 ID 添加。",
++  "agentModel.modelListEmpty":
++    "尚未添加自定义模型。点「获取模型列表」或手动输入模型 ID 添加。",
+   "agentModel.fetchDialogTitle": "选择要添加的模型",
+-  "agentModel.fetchDialogDesc": "从模型服务商拉取列表，勾选要加入的模型（已在列表中的会自动去重）。",
++  "agentModel.fetchDialogDesc":
++    "从模型服务商拉取列表，勾选要加入的模型（已在列表中的会自动去重）。",
+   "agentModel.fetchError": "获取模型列表失败，请检查 API Base URL 和 API Key。",
+   "agentModel.fetchEmpty": "点击「获取模型列表」从服务商拉取可用的模型。",
+   "agentModel.fetchCount": "已选中 {count} 个",
+@@ -193,7 +199,8 @@ const messages = {
+   "agentModel.fetchSelectAll": "全选",
+   "agentModel.fetchDeselectAll": "全不选",
+   "agentModel.removeAll": "删除所有模型",
+-  "agentModel.removeAllConfirm": "确定要删除所有模型吗？需重新添加才能再次选用。",
++  "agentModel.removeAllConfirm":
++    "确定要删除所有模型吗？需重新添加才能再次选用。",
+   "common.search": "搜索",
+   "search.placeholder": "搜索记录…",
+   "search.semanticPlaceholder": "找一找：用自然语言描述…",
+@@ -218,6 +225,7 @@ const messages = {
+   "common.close": "关闭",
+   "common.download": "下载",
+   "common.retry": "重试",
++  "common.renderFallback": "内容渲染失败，已显示纯文本",
+   "common.edit": "编辑",
+   "common.delete": "删除",
+   "common.restore": "恢复",
+diff --git a/apps/web/src/pages/agent-chat-page.tsx b/apps/web/src/pages/agent-chat-page.tsx
+index acca7ca..a56fcd9 100644
+--- a/apps/web/src/pages/agent-chat-page.tsx
++++ b/apps/web/src/pages/agent-chat-page.tsx
+@@ -1,3 +1,4 @@
++import type { AgentSkillId } from "@flaremo/contracts";
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ import { Link } from "@tanstack/react-router";
+ import {
+@@ -5,28 +6,31 @@ import {
+   AtSignIcon,
+   BookOpenTextIcon,
+   BotIcon,
+-  MoreHorizontalIcon,
+   ChevronDownIcon,
++  ClockIcon,
+   ImageIcon,
++  MoreHorizontalIcon,
+   PanelRightIcon,
+   PlusIcon,
+   RefreshCwIcon,
+   SparklesIcon,
+   XIcon,
+ } from "lucide-react";
+-import { useEffect, useRef, useState } from "react";
++import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+ import { toast } from "sonner";
+ import {
++  type AgentChatMessage,
+   createConversation,
+   listConversations,
+   listMessages,
+   sendMessage,
+-  type AgentChatMessage,
+ } from "@/api";
+-import type { AgentSkillId } from "@flaremo/contracts";
+ import { ApiError } from "@/api/client";
+-import { AGENT_SKILL_KEYS, AgentSkillsMenu } from "@/components/agent-skills-menu";
+ import { AgentPendingBubble } from "@/components/agent-pending-bubble";
++import {
++  AGENT_SKILL_KEYS,
++  AgentSkillsMenu,
++} from "@/components/agent-skills-menu";
+ import { LazyMemoContent } from "@/components/lazy-memo-content";
+ import { Button } from "@/components/ui/button";
+ import {
+@@ -42,6 +46,25 @@ import { useI18n } from "@/i18n";
+ import { queryKeys } from "@/lib/query-keys";
+ import { cn } from "@/lib/utils";
+ 
++/** Mobile = below the workspace desktop breakpoint (768px). The Agent page
++ *  switches to a flomo-style full-screen sheet on phones so the keyboard and
++ *  gesture affordances match a native app; the floating panel stays on desktop. */
++const MOBILE_QUERY = "(max-width: 767px)";
++
++function subscribeMobile(onChange: () => void) {
++  const mql = window.matchMedia(MOBILE_QUERY);
++  mql.addEventListener("change", onChange);
++  return () => mql.removeEventListener("change", onChange);
++}
++
++function useIsMobile() {
++  return useSyncExternalStore(
++    subscribeMobile,
++    () => window.matchMedia(MOBILE_QUERY).matches,
++    () => false, // SSR default: desktop-ish so the floating bubble is the first paint.
++  );
++}
++
+ /**
+  * flomo-style Agent chat, rendered as a floating bubble in the bottom-right
+  * corner (workspace only). Clicking the bubble opens a compact popover with a
+@@ -52,6 +75,7 @@ import { cn } from "@/lib/utils";
+  */
+ export function AgentChatDialog() {
+   const { t } = useI18n();
++  const isMobile = useIsMobile();
+   const qc = useQueryClient();
+   const [open, setOpen] = useState(false);
+   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+@@ -92,6 +116,76 @@ export function AgentChatDialog() {
+   const [sources, setSources] = useState<Record<string, string[]>>({});
+   const [awaitingReply, setAwaitingReply] = useState(false);
+   const panelRef = useRef<HTMLDivElement>(null);
++  const touchStartRef = useRef<{ y: number; scrollTop: number } | null>(null);
++
++  // Mobile: pull-down-to-close the full-screen sheet. Only armed when the chat
++  // list is scrolled to the top, so it never fights the chat scroll itself.
++  // The sheet's scroll area uses `overscroll-behavior-contain` so the browser's
++  // own pull-to-refresh is not triggered by the same gesture.
++  useEffect(() => {
++    if (!isMobile || !open) return;
++    const el = panelRef.current;
++    if (!el) return;
++    const scrollEl = el.querySelector<HTMLElement>("[data-agent-scroll]");
++    const onTouchStart = (e: TouchEvent) => {
++      const scrollTop = scrollEl?.scrollTop ?? 0;
++      if (scrollTop > 0) {
++        touchStartRef.current = null;
++        return;
++      }
++      touchStartRef.current = { y: e.touches[0]?.clientY ?? 0, scrollTop };
++    };
++    const onTouchMove = (e: TouchEvent) => {
++      if (!touchStartRef.current) return;
++      const dy = (e.touches[0]?.clientY ?? 0) - touchStartRef.current.y;
++      // Pull down beyond ~64px (loose threshold) closes the sheet.
++      if (dy > 64) {
++        const start = touchStartRef.current;
++        touchStartRef.current = null;
++        const didClose = start.scrollTop <= 0;
++        if (didClose) setOpen(false);
++        return;
++      }
++    };
++    const onTouchEnd = () => {
++      touchStartRef.current = null;
++    };
++    el.addEventListener("touchstart", onTouchStart, { passive: true });
++    el.addEventListener("touchmove", onTouchMove, { passive: true });
++    el.addEventListener("touchend", onTouchEnd, { passive: true });
++    return () => {
++      el.removeEventListener("touchstart", onTouchStart);
++      el.removeEventListener("touchmove", onTouchMove);
++      el.removeEventListener("touchend", onTouchEnd);
++    };
++  }, [isMobile, open]);
++
++  // Mobile: keep the composer visible above the virtual keyboard. Some mobile
++  // browsers keep the layout viewport fixed while the visual viewport shrinks,
++  // which would cover the input; the sheet stays `inset-0` full-screen and we
++  // scroll the composer into view so the keyboard never hides the field.
++  useEffect(() => {
++    if (!isMobile || !open) return;
++    const vv = window.visualViewport;
++    const el = panelRef.current;
++    if (!vv || !el) return;
++    const onResize = () => {
++      requestAnimationFrame(() => {
++        const composer = el.querySelector<HTMLElement>("[data-agent-composer]");
++        composer?.scrollIntoView({
++          block: "end",
++          behavior: "instant" as ScrollBehavior,
++        });
++      });
++    };
++    vv.addEventListener("resize", onResize);
++    // Also reposition when the field gains focus (keyboard animation timing).
++    el.addEventListener("focusin", onResize);
++    return () => {
++      vv.removeEventListener("resize", onResize);
++      el.removeEventListener("focusin", onResize);
++    };
++  }, [isMobile, open]);
+ 
+   const conversations = useQuery({
+     queryKey: queryKeys.agent.conversations,
+@@ -135,7 +229,11 @@ export function AgentChatDialog() {
+     const onPointerDown = (e: PointerEvent) => {
+       const target = e.target as Node;
+       const bubble = document.querySelector<HTMLElement>("[data-agent-bubble]");
+-      if (panelRef.current && !panelRef.current.contains(target) && !bubble?.contains(target)) {
++      if (
++        panelRef.current &&
++        !panelRef.current.contains(target) &&
++        !bubble?.contains(target)
++      ) {
+         setOpen(false);
+       }
+     };
+@@ -165,8 +263,7 @@ export function AgentChatDialog() {
+ 
+   // 可见性由内容驱动：最后一条是 user 就是还在等回复。快轮询的 60 秒兜底只停快轮询，
+   // 这里接着慢轮询，气泡因此不会凭空消失（超时会降级成「仍在处理」）。
+-  const pendingReply =
+-    (messages.data?.messages ?? []).at(-1)?.role === "user";
++  const pendingReply = (messages.data?.messages ?? []).at(-1)?.role === "user";
+   useEffect(() => {
+     if (!open || !activeId || awaitingReply || !pendingReply) return;
+     const slow = setInterval(() => {
+@@ -203,72 +300,140 @@ export function AgentChatDialog() {
+           aria-label={t("agent.title")}
+           className={cn(
+             "z-50 flex flex-col overflow-hidden border border-border/60 bg-background shadow-2xl",
+-            docked
+-              ? "fixed right-0 top-0 h-svh w-[380px] max-w-[calc(100vw-3rem)] rounded-none border-r-0"
+-              : "fixed bottom-20 right-6 h-[560px] w-[380px] max-w-[calc(100vw-3rem)] rounded-2xl",
++            isMobile
++              ? // flomo-style full-screen sheet on phones; borderless, edge to edge.
++                "fixed inset-0 rounded-none border-0"
++              : docked
++                ? "fixed right-0 top-0 h-svh w-[380px] max-w-[calc(100vw-3rem)] rounded-none border-r-0"
++                : "fixed bottom-20 right-6 h-[560px] w-[380px] max-w-[calc(100vw-3rem)] rounded-2xl",
+           )}
+         >
+-          {/* Header */}
+-          <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
+-            <button
+-              type="button"
+-              onClick={() => setAgentMenuOpen((v) => !v)}
+-              className="flex items-center gap-1 text-sm font-semibold"
+-            >
+-              <BotIcon className="size-5 text-primary" />
+-              {t("agent.title")}
+-              <ChevronDownIcon className={cn("size-4 transition-transform", agentMenuOpen && "rotate-180")} />
+-            </button>
+-            <div className="flex-1" />
+-            <DropdownMenu>
+-              <DropdownMenuTrigger
+-                render={
+-                  <Button size="icon-sm" variant="ghost" aria-label="menu">
+-                    <MoreHorizontalIcon />
+-                  </Button>
+-                }
+-              />
+-              <DropdownMenuContent align="end">
+-                <DropdownMenuItem onClick={startNew} disabled={create.isPending}>
+-                  {t("agent.newConversation")}
+-                </DropdownMenuItem>
+-                <DropdownMenuItem onClick={() => toast.info(t("agent.manage"))}>
+-                  {t("agent.manage")}
+-                </DropdownMenuItem>
+-                <DropdownMenuItem onClick={() => setDocked(false)}>
+-                  {t("agent.restoreSize")}
+-                </DropdownMenuItem>
+-              </DropdownMenuContent>
+-            </DropdownMenu>
+-            <Button
+-              size="icon-sm"
+-              variant="ghost"
+-              onClick={() => setDocked((v) => !v)}
+-              aria-label={t("agent.dockToggle")}
+-              title={t("agent.dockToggle")}
+-            >
+-              <PanelRightIcon />
+-            </Button>
+-            <Button
+-              size="icon-sm"
+-              variant="ghost"
+-              onClick={() => setOpen(false)}
+-              aria-label={t("agent.close")}
+-            >
+-              <XIcon />
+-            </Button>
+-          </div>
++          {/* Header. Mobile: flomo-style full-screen bar (X close / title /
++              history clock, ≥44px touch targets). Desktop: the floating panel
++              header with menu, dock toggle and close. */}
++          {isMobile ? (
++            <div className="flex items-center gap-2 border-b border-border/60 px-2 pt-[max(env(safe-area-inset-top),0.5rem)] pb-2">
++              <Button
++                size="icon"
++                variant="ghost"
++                onClick={() => setOpen(false)}
++                aria-label={t("agent.close")}
++                className="size-11"
++              >
++                <XIcon className="size-5" />
++              </Button>
++              <button
++                type="button"
++                onClick={() => {
++                  setMenuTab("chat");
++                  setAgentMenuOpen((v) => !v);
++                }}
++                className="flex flex-1 items-center gap-1 text-base font-semibold"
++              >
++                <BotIcon className="size-5 shrink-0 text-primary" />
++                <span className="truncate">{t("agent.title")}</span>
++                <ChevronDownIcon
++                  className={cn(
++                    "size-4 shrink-0 transition-transform",
++                    agentMenuOpen && "rotate-180",
++                  )}
++                />
++              </button>
++              <Button
++                size="icon"
++                variant="ghost"
++                onClick={() => {
++                  setMenuTab("tasks");
++                  setAgentMenuOpen((v) => !v);
++                }}
++                aria-label={t("agent.tabTasks")}
++                className="size-11"
++              >
++                <ClockIcon className="size-5" />
++              </Button>
++            </div>
++          ) : (
++            <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
++              <button
++                type="button"
++                onClick={() => setAgentMenuOpen((v) => !v)}
++                className="flex items-center gap-1 text-sm font-semibold"
++              >
++                <BotIcon className="size-5 text-primary" />
++                {t("agent.title")}
++                <ChevronDownIcon
++                  className={cn(
++                    "size-4 transition-transform",
++                    agentMenuOpen && "rotate-180",
++                  )}
++                />
++              </button>
++              <div className="flex-1" />
++              <DropdownMenu>
++                <DropdownMenuTrigger
++                  render={
++                    <Button size="icon-sm" variant="ghost" aria-label="menu">
++                      <MoreHorizontalIcon />
++                    </Button>
++                  }
++                />
++                <DropdownMenuContent align="end">
++                  <DropdownMenuItem
++                    onClick={startNew}
++                    disabled={create.isPending}
++                  >
++                    {t("agent.newConversation")}
++                  </DropdownMenuItem>
++                  <DropdownMenuItem
++                    onClick={() => toast.info(t("agent.manage"))}
++                  >
++                    {t("agent.manage")}
++                  </DropdownMenuItem>
++                  <DropdownMenuItem onClick={() => setDocked(false)}>
++                    {t("agent.restoreSize")}
++                  </DropdownMenuItem>
++                </DropdownMenuContent>
++              </DropdownMenu>
++              <Button
++                size="icon-sm"
++                variant="ghost"
++                onClick={() => setDocked((v) => !v)}
++                aria-label={t("agent.dockToggle")}
++                title={t("agent.dockToggle")}
++              >
++                <PanelRightIcon />
++              </Button>
++              <Button
++                size="icon-sm"
++                variant="ghost"
++                onClick={() => setOpen(false)}
++                aria-label={t("agent.close")}
++              >
++                <XIcon />
++              </Button>
++            </div>
++          )}
+ 
+           {/* Agent ∨ dropdown card */}
+           {agentMenuOpen && (
+-            <div data-agent-menu className="absolute left-4 top-14 z-50 w-full max-w-[calc(100%-2rem)] rounded-xl border border-border/60 bg-popover p-2 shadow-xl">
++            <div
++              data-agent-menu
++              className={cn(
++                "absolute left-4 z-50 w-full max-w-[calc(100%-2rem)] rounded-xl border border-border/60 bg-popover p-2 shadow-xl",
++                isMobile
++                  ? "top-[calc(env(safe-area-inset-top)+3.25rem)] max-h-[calc(100dvh-6rem)] overflow-y-auto"
++                  : "top-14",
++              )}
++            >
+               <div className="mb-2 flex rounded-lg bg-muted p-1">
+                 <button
+                   type="button"
+                   onClick={() => setMenuTab("chat")}
+                   className={cn(
+                     "flex-1 rounded-md px-3 py-1.5 text-sm",
+-                    menuTab === "chat" ? "bg-background shadow-sm" : "text-muted-foreground",
++                    menuTab === "chat"
++                      ? "bg-background shadow-sm"
++                      : "text-muted-foreground",
+                   )}
+                 >
+                   {t("agent.tabChat")}
+@@ -278,7 +443,9 @@ export function AgentChatDialog() {
+                   onClick={() => setMenuTab("tasks")}
+                   className={cn(
+                     "flex-1 rounded-md px-3 py-1.5 text-sm",
+-                    menuTab === "tasks" ? "bg-background shadow-sm" : "text-muted-foreground",
++                    menuTab === "tasks"
++                      ? "bg-background shadow-sm"
++                      : "text-muted-foreground",
+                   )}
+                 >
+                   {t("agent.tabTasks")}
+@@ -286,24 +453,28 @@ export function AgentChatDialog() {
+               </div>
+               {menuTab === "chat" ? (
+                 <div className="max-h-60 overflow-y-auto">
+-                  {((conversations.data?.conversations ?? []).filter((c) => !/^async smoke/i.test(c.title))).length === 0 ? (
++                  {(conversations.data?.conversations ?? []).filter(
++                    (c) => !/^async smoke/i.test(c.title),
++                  ).length === 0 ? (
+                     <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                       {t("agent.noHistory")}
+                     </div>
+                   ) : (
+-                    (conversations.data?.conversations ?? []).filter((c) => !/^async smoke/i.test(c.title)).map((c) => (
+-                      <button
+-                        key={c.id}
+-                        type="button"
+-                        onClick={() => {
+-                          setActiveId(c.id);
+-                          setAgentMenuOpen(false);
+-                        }}
+-                        className="block w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
+-                      >
+-                        {c.title}
+-                      </button>
+-                    ))
++                    (conversations.data?.conversations ?? [])
++                      .filter((c) => !/^async smoke/i.test(c.title))
++                      .map((c) => (
++                        <button
++                          key={c.id}
++                          type="button"
++                          onClick={() => {
++                            setActiveId(c.id);
++                            setAgentMenuOpen(false);
++                          }}
++                          className="block w-full truncate rounded-md px-3 py-2 text-left text-sm hover:bg-accent"
++                        >
++                          {c.title}
++                        </button>
++                      ))
+                   )}
+                 </div>
+               ) : (
+@@ -324,8 +495,17 @@ export function AgentChatDialog() {
+           />
+ 
+           {/* Composer */}
+-          <div className="border-t border-border/60 p-3">
++          <div
++            data-agent-composer
++            className={cn(
++              "border-t border-border/60",
++              isMobile
++                ? "p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]"
++                : "p-3",
++            )}
++          >
+             <Composer
++              isMobile={isMobile}
+               activeId={activeId}
+               onSent={() => setAwaitingReply(true)}
+               onCreated={(id) =>
+@@ -336,7 +516,6 @@ export function AgentChatDialog() {
+               {t("agent.disclaimer")}
+             </p>
+           </div>
+-
+         </div>
+       )}
+     </>
+@@ -391,7 +570,10 @@ function ChatScroll({
+     );
+   }
+   return (
+-    <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
++    <div
++      data-agent-scroll
++      className="flex-1 space-y-3 overflow-y-auto overscroll-behavior-contain px-4 py-4"
++    >
+       {messages.map((m) => (
+         <MessageBubble key={m.id} message={m} sources={sources[m.id]} />
+       ))}
+@@ -414,10 +596,7 @@ export function MessageBubble({
+   const isUser = message.role === "user";
+   return (
+     <div
+-      className={cn(
+-        "flex w-full",
+-        isUser ? "justify-end" : "justify-start",
+-      )}
++      className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
+     >
+       <div
+         className={cn(
+@@ -430,7 +609,10 @@ export function MessageBubble({
+         {isUser ? (
+           <p className="whitespace-pre-wrap break-words">{message.content}</p>
+         ) : (
+-          <LazyMemoContent className="break-words text-sm leading-6" content={message.content} />
++          <LazyMemoContent
++            className="break-words text-sm leading-6"
++            content={message.content}
++          />
+         )}
+         {!isUser && sources && sources.length > 0 && (
+           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2">
+@@ -459,10 +641,12 @@ function Composer({
+   activeId,
+   onCreated,
+   onSent,
++  isMobile,
+ }: {
+   activeId: string | null;
+   onCreated: (id: string) => void;
+   onSent: () => void;
++  isMobile: boolean;
+ }) {
+   const { t } = useI18n();
+   const qc = useQueryClient();
+@@ -525,7 +709,8 @@ function Composer({
+       if (ctx?.prev) {
+         qc.setQueryData(ctx.queryKey as string[], ctx.prev);
+       }
+-      const msg = error instanceof ApiError ? error.message : t("agent.sendFailed");
++      const msg =
++        error instanceof ApiError ? error.message : t("agent.sendFailed");
+       setSendError(msg);
+       toast.error(msg);
+     },
+@@ -577,13 +762,17 @@ function Composer({
+         <Button
+           size="icon-sm"
+           variant="ghost"
+-          className="text-muted-foreground hover:text-foreground"
++          className={cn(
++            "text-muted-foreground hover:text-foreground",
++            isMobile && "size-11",
++          )}
+           aria-label={t("agent.mention")}
+           title={t("agent.mention")}
+         >
+           <AtSignIcon className="size-4" strokeWidth={1.5} />
+         </Button>
+         <AgentSkillsMenu
++          isMobile={isMobile}
+           disabled={send.isPending}
+           onSelect={(skill) => {
+             setSendError(null);
+@@ -597,7 +786,10 @@ function Composer({
+         <Button
+           size="icon-sm"
+           variant="ghost"
+-          className="text-muted-foreground hover:text-foreground"
++          className={cn(
++            "text-muted-foreground hover:text-foreground",
++            isMobile && "size-11",
++          )}
+           aria-label={t("agent.attachImage")}
+           title={t("agent.attachImage")}
+         >
+@@ -611,7 +803,10 @@ function Composer({
+             <Button
+               size="icon-sm"
+               variant="default"
+-              className="bg-emerald-500 text-white hover:bg-emerald-600"
++              className={cn(
++                "bg-emerald-500 text-white hover:bg-emerald-600",
++                isMobile && "size-11",
++              )}
+               onClick={retry}
+               aria-label={t("agent.retry")}
+             >
+@@ -626,6 +821,7 @@ function Composer({
+           variant={canSend ? "default" : "secondary"}
+           className={cn(
+             "size-8 rounded-full",
++            isMobile && "size-11",
+             canSend
+               ? "bg-emerald-500 text-white hover:bg-emerald-600"
+               : "bg-muted text-muted-foreground hover:bg-muted",
+@@ -639,4 +835,4 @@ function Composer({
+       </div>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+-- 
+2.54.0 (Apple Git-157)
+
