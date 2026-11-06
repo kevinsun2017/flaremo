@@ -1,0 +1,33 @@
+From d78f92e78f797d1ffb7279c51ba80dd85985ffe7 Mon Sep 17 00:00:00 2001
+From: kevinsun2017 <wallymoltxv3-bot@openclaw.ai>
+Date: Fri, 6 Nov 2026 12:59:25 +0800
+Subject: [PATCH] =?UTF-8?q?fix(agent):=20=E6=89=8B=E6=9C=BA=E5=85=A8?=
+ =?UTF-8?q?=E5=B1=8F=E9=A1=B5=E5=8A=A9=E6=89=8B=E6=B0=94=E6=B3=A1=E6=9C=80?=
+ =?UTF-8?q?=E5=A4=A7=E5=AE=BD=2085%=E2=86=9292%=EF=BC=88=C2=A722=20?=
+ =?UTF-8?q?=E6=95=99=E4=B8=BB=E5=AE=9A=E5=A5=8F=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+手机 <768px 聊天气泡 max-w-[85%]→[92%]，右缘更接近输入框对齐；
+桌面 85% 不变，通栏完全对齐本轮不做。
+---
+ apps/web/src/pages/agent-chat-page.tsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/apps/web/src/pages/agent-chat-page.tsx b/apps/web/src/pages/agent-chat-page.tsx
+index a56fcd9..d19294d 100644
+--- a/apps/web/src/pages/agent-chat-page.tsx
++++ b/apps/web/src/pages/agent-chat-page.tsx
+@@ -600,7 +600,7 @@ export function MessageBubble({
+     >
+       <div
+         className={cn(
+-          "max-w-[85%] rounded-xl border border-border/50 p-3 text-sm shadow-xs",
++          "max-w-[85%] max-md:max-w-[92%] rounded-xl border border-border/50 p-3 text-sm shadow-xs",
+           isUser
+             ? "border-primary/30 bg-primary/10 text-foreground"
+             : "bg-card/50",
+-- 
+2.54.0 (Apple Git-157)
+
